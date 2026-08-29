@@ -4,6 +4,7 @@ import (
 	"errors"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func testStore(t *testing.T) *Store {
@@ -187,5 +188,48 @@ func TestListEnvelopesRequiresMembership(t *testing.T) {
 	// 非成员用 agent 钥匙也应被拒
 	if _, err := s.ListEnvelopes(ch.ID, gast.ID, true, false); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("非成员 agent 应被拒, got %v", err)
+	}
+}
+
+func TestSessions(t *testing.T) {
+	s := testStore(t)
+	u, _ := s.CreateUser("hou", "Hou", "pw")
+	tok, err := s.CreateSession(u.ID)
+	if err != nil || tok == "" {
+		t.Fatal(err)
+	}
+	got, err := s.UserBySession(tok)
+	if err != nil || got.ID != u.ID {
+		t.Fatalf("按 session 找用户失败: %v", err)
+	}
+	if _, err := s.UserBySession("quatsch"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("无效 session 应 ErrNotFound, got %v", err)
+	}
+}
+
+func TestInvites(t *testing.T) {
+	s := testStore(t)
+	u, _ := s.CreateUser("hou", "Hou", "pw")
+	ch, _ := s.CreateChannel("deutschapp")
+	code, err := s.CreateInvite(ch.ID, u.ID, 24*time.Hour)
+	if err != nil || code == "" {
+		t.Fatal(err)
+	}
+	name, err := s.InviteChannel(code)
+	if err != nil || name != "deutschapp" {
+		t.Fatalf("邀请应指向 deutschapp: %q %v", name, err)
+	}
+	chID, err := s.ConsumeInvite(code)
+	if err != nil || chID != ch.ID {
+		t.Fatal(err)
+	}
+	// 一次性：再用必须失败
+	if _, err := s.ConsumeInvite(code); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("已用邀请应失效, got %v", err)
+	}
+	// 过期邀请
+	expired, _ := s.CreateInvite(ch.ID, u.ID, -time.Hour)
+	if _, err := s.ConsumeInvite(expired); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("过期邀请应失效, got %v", err)
 	}
 }

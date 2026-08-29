@@ -433,3 +433,72 @@ func (s *Store) ChannelsForUser(userID int64) ([]ChannelInfo, error) {
 	}
 	return out, rows.Err()
 }
+
+func (s *Store) CreateSession(userID int64) (string, error) {
+	token := randomToken(24)
+	_, err := s.db.Exec(`INSERT INTO sessions (token, user_id, created_at) VALUES (?,?,?)`, token, userID, now())
+	return token, err
+}
+
+func (s *Store) UserBySession(token string) (*User, error) {
+	u, _, err := s.scanUser(s.db.QueryRow(`SELECT `+userCols+` FROM users u
+		JOIN sessions se ON se.user_id=u.id WHERE se.token=?`, token))
+	return u, err
+}
+
+func (s *Store) CreateInvite(channelID, createdBy int64, ttl time.Duration) (string, error) {
+	code := randomToken(8)
+	var chVal any
+	if channelID != 0 {
+		chVal = channelID
+	}
+	expires := time.Now().UTC().Add(ttl).Format(time.RFC3339)
+	_, err := s.db.Exec(`INSERT INTO invites (code, channel_id, created_by, expires_at) VALUES (?,?,?,?)`,
+		code, chVal, createdBy, expires)
+	return code, err
+}
+
+func (s *Store) inviteRow(code string) (channelID int64, err error) {
+	var chID sql.NullInt64
+	var expires string
+	var used sql.NullString
+	err = s.db.QueryRow(`SELECT channel_id, expires_at, used_at FROM invites WHERE code=?`, code).
+		Scan(&chID, &expires, &used)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, ErrNotFound
+	}
+	if err != nil {
+		return 0, err
+	}
+	exp, perr := time.Parse(time.RFC3339, expires)
+	if perr != nil || used.Valid || time.Now().UTC().After(exp) {
+		return 0, ErrNotFound
+	}
+	return chID.Int64, nil
+}
+
+func (s *Store) InviteChannel(code string) (string, error) {
+	chID, err := s.inviteRow(code)
+	if err != nil {
+		return "", err
+	}
+	if chID == 0 {
+		return "", nil
+	}
+	var name string
+	if err := s.db.QueryRow(`SELECT name FROM channels WHERE id=?`, chID).Scan(&name); err != nil {
+		return "", err
+	}
+	return name, nil
+}
+
+func (s *Store) ConsumeInvite(code string) (int64, error) {
+	chID, err := s.inviteRow(code)
+	if err != nil {
+		return 0, err
+	}
+	if _, err := s.db.Exec(`UPDATE invites SET used_at=? WHERE code=?`, now(), code); err != nil {
+		return 0, err
+	}
+	return chID, nil
+}
