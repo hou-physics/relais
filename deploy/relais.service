@@ -1,0 +1,13 @@
+[Unit]
+Description=Relais message relay
+After=network.target
+
+[Service]
+ExecStart=/usr/local/bin/relais serve --config /etc/relais/server.toml
+Restart=always
+RestartSec=3
+User=relais
+Group=relais
+
+[Install]
+WantedBy=multi-user.target

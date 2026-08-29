@@ -1,0 +1,4 @@
+# 复制到服务器 /etc/relais/server.toml 后按需修改
+listen = "127.0.0.1:8080"          # 只监听本机，公网由 Caddy 反代
+data_dir = "/var/lib/relais"       # SQLite + downloads 都在这里
+base_url = "https://relais.example.com"  # 换成你的域名

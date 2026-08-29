@@ -1,0 +1,5 @@
+# /etc/caddy/Caddyfile —— 换成你的域名后 systemctl reload caddy
+relais.example.com {
+	reverse_proxy 127.0.0.1:8080
+	encode gzip
+}
