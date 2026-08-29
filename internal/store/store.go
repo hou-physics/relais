@@ -305,6 +305,13 @@ func b2i(b bool) int {
 }
 
 func (s *Store) ListEnvelopes(channelID, viewerID int64, agentKey, unreadOnly bool) ([]Message, error) {
+	ok, err := s.IsMember(channelID, viewerID)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, ErrForbidden
+	}
 	rows, err := s.db.Query(envelopeQuery, viewerID, channelID, b2i(agentKey), b2i(unreadOnly))
 	if err != nil {
 		return nil, err

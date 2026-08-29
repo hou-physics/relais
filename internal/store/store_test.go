@@ -175,3 +175,17 @@ func TestRecipientsExpandAndOrder(t *testing.T) {
 		t.Fatalf("列表应按 id 升序: %+v", list)
 	}
 }
+
+func TestListEnvelopesRequiresMembership(t *testing.T) {
+	s, ch, _, _, _, _ := setupTrio(t)
+	// 创建未加入频道的用户
+	gast, _ := s.CreateUser("gast", "Gast", "pw")
+	// 非成员用 human 钥匙应被拒
+	if _, err := s.ListEnvelopes(ch.ID, gast.ID, false, false); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("非成员 human 应被拒, got %v", err)
+	}
+	// 非成员用 agent 钥匙也应被拒
+	if _, err := s.ListEnvelopes(ch.ID, gast.ID, true, false); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("非成员 agent 应被拒, got %v", err)
+	}
+}
