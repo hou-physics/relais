@@ -519,3 +519,9 @@ func (s *Store) ChannelNameByID(id int64) (string, error) {
 	}
 	return name, err
 }
+
+// FirstUser 返回 id 最小的用户（服务器本机 invite 命令的记账主体）。
+func (s *Store) FirstUser() (*User, error) {
+	u, _, err := s.scanUser(s.db.QueryRow(`SELECT ` + userCols + ` FROM users ORDER BY id LIMIT 1`))
+	return u, err
+}

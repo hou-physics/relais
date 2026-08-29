@@ -3,6 +3,8 @@ package main
 import (
 	"fmt"
 	"os"
+
+	"github.com/hou-physics/relais/internal/cli"
 )
 
 const version = "0.1.0-m1"
@@ -22,6 +24,14 @@ func run(args []string) error {
 	case "version":
 		fmt.Println("relais", version)
 		return nil
+	case "serve":
+		return cli.RunServe(args[1:])
+	case "user":
+		return cli.RunUser(args[1:])
+	case "channel":
+		return cli.RunChannel(args[1:])
+	case "invite":
+		return cli.RunInvite(args[1:])
 	default:
 		return fmt.Errorf("未知子命令 %q（version 之外的命令在后续任务实现）", args[0])
 	}

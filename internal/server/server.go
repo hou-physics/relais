@@ -33,6 +33,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/messages/{id}", s.auth(s.handleGet))
 	mux.HandleFunc("POST /api/messages/{id}/read", s.auth(s.handleRead))
 	mux.HandleFunc("GET /api/events", s.auth(s.handleEvents))
+	mux.HandleFunc("POST /api/invites", s.auth(s.handleCreateInvite))
+	mux.HandleFunc("GET /api/join/{code}", s.handleJoinInfo)
+	mux.HandleFunc("POST /api/join", s.handleJoin)
+	mux.HandleFunc("GET /download/{file}", s.handleDownload)
 	return mux
 }
 
