@@ -26,6 +26,12 @@ func run(args []string) error {
 		return nil
 	case "serve":
 		return cli.RunServe(args[1:])
+	case "login":
+		return cli.RunLogin(args[1:])
+	case "init":
+		return cli.RunInit(args[1:])
+	case "agent-guide":
+		return cli.RunGuide(args[1:])
 	case "user":
 		return cli.RunUser(args[1:])
 	case "channel":
