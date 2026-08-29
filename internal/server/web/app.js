@@ -103,8 +103,9 @@ function renderMsg(m) {
   div.className = "msg" + (m.from === me.username ? " mine" : "");
   const head = document.createElement("div");
   head.className = "head";
-  head.innerHTML = `<span class="from"></span><span class="to">→ ${m.to.join(", ")}</span><time></time>`;
+  head.innerHTML = `<span class="from"></span><span class="to"></span><time></time>`;
   head.querySelector(".from").textContent = m.from_display;
+  head.querySelector(".to").textContent = "→ " + m.to.join(", ");
   head.querySelector("time").textContent = new Date(m.created_at).toLocaleString("zh-CN");
   const sum = document.createElement("div");
   sum.className = "summary"; sum.textContent = m.summary;
