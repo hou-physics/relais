@@ -30,6 +30,8 @@ func run(args []string) error {
 		return cli.RunLogin(args[1:])
 	case "init":
 		return cli.RunInit(args[1:])
+	case "send":
+		return cli.RunSend(args[1:])
 	case "agent-guide":
 		return cli.RunGuide(args[1:])
 	case "user":
