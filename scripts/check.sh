@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")/.."
+unformatted=$(gofmt -l . | grep -v '^vendor/' || true)
+if [ -n "$unformatted" ]; then echo "gofmt 不通过:"; echo "$unformatted"; exit 1; fi
+go vet ./...
+CGO_ENABLED=0 go build ./...
+go test ./...
+echo "✅ 地板全绿"
