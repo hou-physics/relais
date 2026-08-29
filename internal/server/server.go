@@ -25,6 +25,12 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/login", s.handleLogin)
 	mux.HandleFunc("GET /api/me", s.auth(s.handleMe))
+	mux.HandleFunc("GET /api/channels", s.auth(s.handleChannels))
+	mux.HandleFunc("GET /api/channels/{name}/members", s.auth(s.handleMembers))
+	mux.HandleFunc("GET /api/channels/{name}/messages", s.auth(s.handleList))
+	mux.HandleFunc("POST /api/channels/{name}/messages", s.auth(s.handleSend))
+	mux.HandleFunc("GET /api/messages/{id}", s.auth(s.handleGet))
+	mux.HandleFunc("POST /api/messages/{id}/read", s.auth(s.handleRead))
 	return mux
 }
 
@@ -36,4 +42,8 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 
 func writeErr(w http.ResponseWriter, code int, format string, args ...any) {
 	writeJSON(w, code, api.ErrorResponse{Error: fmt.Sprintf(format, args...)})
+}
+
+func (s *Server) publish(channelID int64, m api.Message) {
+	// Task 9 实现；本任务先加空方法占位
 }

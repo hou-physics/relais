@@ -510,3 +510,12 @@ func (s *Store) ConsumeInvite(code string) (int64, error) {
 	}
 	return chID, nil
 }
+
+func (s *Store) ChannelNameByID(id int64) (string, error) {
+	var name string
+	err := s.db.QueryRow(`SELECT name FROM channels WHERE id=?`, id).Scan(&name)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	return name, err
+}
