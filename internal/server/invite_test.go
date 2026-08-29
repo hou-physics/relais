@@ -72,3 +72,29 @@ func TestCreateInviteHumanOnly(t *testing.T) {
 		t.Fatalf("应返回邀请链接: %+v", out)
 	}
 }
+
+func TestJoinDuplicateUsernameDoesNotBurnInvite(t *testing.T) {
+	ts, st, users := newTestServer(t)
+	ch, _ := st.ChannelByName("deutschapp")
+	code, err := st.CreateInvite(ch.ID, users["hou"].ID, 24*time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Attempt to join with an already-taken username (hou)
+	body, _ := json.Marshal(api.JoinRequest{Code: code, Username: "hou", DisplayName: "Hou", Password: "pw-hou-12"})
+	resp, _ := http.Post(ts.URL+"/api/join", "application/json", bytes.NewReader(body))
+	if resp.StatusCode != 400 {
+		t.Fatalf("重名请求应返回 400, got %d", resp.StatusCode)
+	}
+	// Invite should still be redeemable with a different username
+	body2, _ := json.Marshal(api.JoinRequest{Code: code, Username: "newuser", DisplayName: "NewUser", Password: "pw-newuser"})
+	resp, _ = http.Post(ts.URL+"/api/join", "application/json", bytes.NewReader(body2))
+	if resp.StatusCode != 200 {
+		t.Fatalf("邀请码应仍可用, got %d", resp.StatusCode)
+	}
+	var jr api.JoinResponse
+	json.NewDecoder(resp.Body).Decode(&jr)
+	if jr.Username != "newuser" {
+		t.Fatalf("用户名不对: %+v", jr)
+	}
+}

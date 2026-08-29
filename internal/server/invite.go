@@ -90,6 +90,11 @@ func (s *Server) handleJoin(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "密码至少 8 位")
 		return
 	}
+	// Pre-check username availability to prevent invite burning via duplicate username DoS
+	if _, err := s.st.UserByName(req.Username); err == nil {
+		writeErr(w, http.StatusBadRequest, "用户名 %q 已被占用，请换一个", req.Username)
+		return
+	}
 	chID, err := s.st.ConsumeInvite(req.Code)
 	if errors.Is(err, store.ErrNotFound) {
 		writeErr(w, http.StatusBadRequest, "邀请链接无效、已过期或已被使用")
