@@ -9,6 +9,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/oklog/ulid/v2"
 	"golang.org/x/crypto/bcrypt"
 	_ "modernc.org/sqlite"
 )
@@ -225,4 +226,203 @@ func (s *Store) IsMember(channelID, userID int64) (bool, error) {
 	var n int
 	err := s.db.QueryRow(`SELECT COUNT(*) FROM members WHERE channel_id=? AND user_id=?`, channelID, userID).Scan(&n)
 	return n > 0, err
+}
+
+type Message struct {
+	ID            string
+	ChannelID     int64
+	SenderID      int64
+	Sender        string
+	SenderDisplay string
+	To            []string
+	Summary       string
+	Body          string
+	InReplyTo     string
+	CreatedAt     time.Time
+	Unread        bool
+}
+
+func (s *Store) SaveMessage(channelID, senderID int64, toIDs []int64, summary, body, inReplyTo string) (*Message, error) {
+	id := ulid.Make().String()
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	createdAt := now()
+	var replyVal any
+	if inReplyTo != "" {
+		replyVal = inReplyTo
+	}
+	if _, err := tx.Exec(`INSERT INTO messages (id, channel_id, sender_id, summary, body_md, in_reply_to, created_at)
+		VALUES (?,?,?,?,?,?,?)`, id, channelID, senderID, summary, body, replyVal, createdAt); err != nil {
+		return nil, err
+	}
+	for _, uid := range toIDs {
+		if _, err := tx.Exec(`INSERT INTO recipients (message_id, user_id) VALUES (?,?)`, id, uid); err != nil {
+			return nil, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return s.GetMessage(id, senderID, true)
+}
+
+func (s *Store) recipientNames(messageID string) ([]string, error) {
+	rows, err := s.db.Query(`SELECT u.username FROM recipients r JOIN users u ON u.id=r.user_id
+		WHERE r.message_id=? ORDER BY u.username`, messageID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var names []string
+	for rows.Next() {
+		var n string
+		if err := rows.Scan(&n); err != nil {
+			return nil, err
+		}
+		names = append(names, n)
+	}
+	return names, rows.Err()
+}
+
+const envelopeQuery = `
+SELECT m.id, m.channel_id, m.sender_id, u.username, u.display_name,
+       m.summary, COALESCE(m.in_reply_to,''), m.created_at,
+       EXISTS(SELECT 1 FROM recipients ru WHERE ru.message_id=m.id AND ru.user_id=?1 AND ru.read_at IS NULL)
+FROM messages m JOIN users u ON u.id=m.sender_id
+WHERE m.channel_id=?2
+  AND (?3=0 OR m.sender_id=?1 OR EXISTS(SELECT 1 FROM recipients r WHERE r.message_id=m.id AND r.user_id=?1))
+  AND (?4=0 OR EXISTS(SELECT 1 FROM recipients r2 WHERE r2.message_id=m.id AND r2.user_id=?1 AND r2.read_at IS NULL))
+ORDER BY m.id`
+
+func b2i(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}
+
+func (s *Store) ListEnvelopes(channelID, viewerID int64, agentKey, unreadOnly bool) ([]Message, error) {
+	rows, err := s.db.Query(envelopeQuery, viewerID, channelID, b2i(agentKey), b2i(unreadOnly))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Message
+	for rows.Next() {
+		var m Message
+		var created string
+		var unread int
+		if err := rows.Scan(&m.ID, &m.ChannelID, &m.SenderID, &m.Sender, &m.SenderDisplay,
+			&m.Summary, &m.InReplyTo, &created, &unread); err != nil {
+			return nil, err
+		}
+		m.CreatedAt, _ = time.Parse(time.RFC3339, created)
+		m.Unread = unread == 1
+		if m.To, err = s.recipientNames(m.ID); err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) GetMessage(id string, viewerID int64, agentKey bool) (*Message, error) {
+	var m Message
+	var created string
+	err := s.db.QueryRow(`SELECT m.id, m.channel_id, m.sender_id, u.username, u.display_name,
+		m.summary, m.body_md, COALESCE(m.in_reply_to,''), m.created_at
+		FROM messages m JOIN users u ON u.id=m.sender_id WHERE m.id=?`, id).
+		Scan(&m.ID, &m.ChannelID, &m.SenderID, &m.Sender, &m.SenderDisplay,
+			&m.Summary, &m.Body, &m.InReplyTo, &created)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	m.CreatedAt, _ = time.Parse(time.RFC3339, created)
+	if m.To, err = s.recipientNames(m.ID); err != nil {
+		return nil, err
+	}
+	viewer, err := s.userByID(viewerID)
+	if err != nil {
+		return nil, err
+	}
+	if agentKey {
+		// 核心不变量（spec §5）：agent 只能读自己主人为发件人或收件人的消息
+		if m.SenderID != viewerID && !contains(m.To, viewer.Username) {
+			return nil, ErrForbidden
+		}
+	} else {
+		ok, err := s.IsMember(m.ChannelID, viewerID)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			return nil, ErrForbidden
+		}
+	}
+	var unread int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM recipients WHERE message_id=? AND user_id=? AND read_at IS NULL`,
+		id, viewerID).Scan(&unread); err != nil {
+		return nil, err
+	}
+	m.Unread = unread == 1
+	return &m, nil
+}
+
+func (s *Store) userByID(id int64) (*User, error) {
+	u, _, err := s.scanUser(s.db.QueryRow(`SELECT `+userCols+` FROM users WHERE id=?`, id))
+	return u, err
+}
+
+func contains(list []string, v string) bool {
+	for _, x := range list {
+		if x == v {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Store) MarkRead(messageID string, userID int64) error {
+	var n int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM recipients WHERE message_id=? AND user_id=?`,
+		messageID, userID).Scan(&n); err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrForbidden
+	}
+	_, err := s.db.Exec(`UPDATE recipients SET read_at=? WHERE message_id=? AND user_id=? AND read_at IS NULL`,
+		now(), messageID, userID)
+	return err
+}
+
+type ChannelInfo struct {
+	Name   string
+	Unread int
+}
+
+func (s *Store) ChannelsForUser(userID int64) ([]ChannelInfo, error) {
+	rows, err := s.db.Query(`SELECT c.name,
+		(SELECT COUNT(*) FROM recipients r JOIN messages m2 ON m2.id=r.message_id
+		 WHERE m2.channel_id=c.id AND r.user_id=?1 AND r.read_at IS NULL)
+		FROM channels c JOIN members mb ON mb.channel_id=c.id AND mb.user_id=?1 ORDER BY c.name`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ChannelInfo
+	for rows.Next() {
+		var ci ChannelInfo
+		if err := rows.Scan(&ci.Name, &ci.Unread); err != nil {
+			return nil, err
+		}
+		out = append(out, ci)
+	}
+	return out, rows.Err()
 }
