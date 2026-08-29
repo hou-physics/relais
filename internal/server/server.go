@@ -15,10 +15,11 @@ type Server struct {
 	st      *store.Store
 	baseURL string
 	dataDir string
+	hub     *hub
 }
 
 func New(st *store.Store, baseURL, dataDir string) *Server {
-	return &Server{st: st, baseURL: baseURL, dataDir: dataDir}
+	return &Server{st: st, baseURL: baseURL, dataDir: dataDir, hub: newHub()}
 }
 
 func (s *Server) Handler() http.Handler {
@@ -31,6 +32,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/channels/{name}/messages", s.auth(s.handleSend))
 	mux.HandleFunc("GET /api/messages/{id}", s.auth(s.handleGet))
 	mux.HandleFunc("POST /api/messages/{id}/read", s.auth(s.handleRead))
+	mux.HandleFunc("GET /api/events", s.auth(s.handleEvents))
 	return mux
 }
 
@@ -42,8 +44,4 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 
 func writeErr(w http.ResponseWriter, code int, format string, args ...any) {
 	writeJSON(w, code, api.ErrorResponse{Error: fmt.Sprintf(format, args...)})
-}
-
-func (s *Server) publish(channelID int64, m api.Message) {
-	// Task 9 实现；本任务先加空方法占位
 }
