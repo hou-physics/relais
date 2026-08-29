@@ -497,8 +497,16 @@ func (s *Store) ConsumeInvite(code string) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	if _, err := s.db.Exec(`UPDATE invites SET used_at=? WHERE code=?`, now(), code); err != nil {
+	res, err := s.db.Exec(`UPDATE invites SET used_at=? WHERE code=? AND used_at IS NULL`, now(), code)
+	if err != nil {
 		return 0, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	if n == 0 {
+		return 0, ErrNotFound
 	}
 	return chID, nil
 }
