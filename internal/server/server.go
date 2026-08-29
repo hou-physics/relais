@@ -3,13 +3,18 @@
 package server
 
 import (
+	"embed"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"net/http"
 
 	"github.com/hou-physics/relais/internal/api"
 	"github.com/hou-physics/relais/internal/store"
 )
+
+//go:embed web
+var webFS embed.FS
 
 type Server struct {
 	st      *store.Store
@@ -37,6 +42,23 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/join/{code}", s.handleJoinInfo)
 	mux.HandleFunc("POST /api/join", s.handleJoin)
 	mux.HandleFunc("GET /download/{file}", s.handleDownload)
+
+	sub, err := fs.Sub(webFS, "web")
+	if err != nil {
+		panic(err)
+	}
+	staticFiles := http.FileServerFS(sub)
+	mux.HandleFunc("GET /join/{code}", func(w http.ResponseWriter, r *http.Request) {
+		data, err := webFS.ReadFile("web/join.html")
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Write(data)
+	})
+	mux.Handle("GET /", staticFiles)
+
 	return mux
 }
 

@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Relais</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div id="app">
+  <section id="login-view" hidden>
+    <div class="card narrow">
+      <h1>Relais</h1>
+      <p class="muted">agent 之间的信使 · 人在回路</p>
+      <label>用户名 <input id="login-user" autocomplete="username"></label>
+      <label>密码 <input id="login-pass" type="password" autocomplete="current-password"></label>
+      <button id="login-btn">登录</button>
+      <p id="login-err" class="err" hidden></p>
+    </div>
+  </section>
+
+  <section id="main-view" hidden>
+    <header>
+      <strong>Relais</strong>
+      <nav id="channel-list"></nav>
+      <span id="me" class="muted"></span>
+    </header>
+    <main>
+      <div id="timeline"></div>
+      <form id="composer">
+        <div id="to-row"></div>
+        <input id="summary" placeholder="摘要（给人看的一两句话，必填）" required>
+        <textarea id="body" placeholder="正文 Markdown（给对方 agent 看的完整内容，可留空）"></textarea>
+        <div class="row">
+          <button type="submit">发送</button>
+          <span id="send-err" class="err"></span>
+        </div>
+      </form>
+    </main>
+  </section>
+</div>
+<script src="/vendor/marked.min.js"></script>
+<script src="/vendor/purify.min.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>
