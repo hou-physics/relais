@@ -55,10 +55,22 @@ func RunSend(args []string) error {
 			return fmt.Errorf("读取正文文件失败: %w", err)
 		}
 	}
+	// Draft protection closure: wraps any subsequent error to save stdin if needed
+	failWithDraft := func(err error) error {
+		if !fromStdin {
+			return err
+		}
+		draft := filepath.Join(root, "relais", "drafts",
+			time.Now().UTC().Format("20060102-150405")+".md")
+		if werr := os.WriteFile(draft, body, 0o644); werr == nil {
+			return fmt.Errorf("%w（正文已保存到 %s）", err, draft)
+		}
+		return err
+	}
 	// 解析收件人（spec §7 默认收件人规则）
 	members, err := c.Members(proj.Channel)
 	if err != nil {
-		return err
+		return failWithDraft(err)
 	}
 	var others []string
 	for _, m := range members {
@@ -82,14 +94,7 @@ func RunSend(args []string) error {
 		To: recipients, Summary: *summary, Body: string(body), InReplyTo: *reply,
 	})
 	if err != nil {
-		if fromStdin {
-			draft := filepath.Join(root, "relais", "drafts",
-				time.Now().UTC().Format("20060102-150405")+".md")
-			if werr := os.WriteFile(draft, body, 0o644); werr == nil {
-				return fmt.Errorf("发送失败（正文已保存到 %s）: %w", draft, err)
-			}
-		}
-		return fmt.Errorf("发送失败: %w", err)
+		return failWithDraft(fmt.Errorf("发送失败: %w", err))
 	}
 	// sent/ 副本（本地快照；事实源在服务器）
 	copyPath := filepath.Join(root, "relais", "sent", localName(sent.ID, sent.CreatedAt, cfg.Username))

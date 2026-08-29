@@ -99,3 +99,26 @@ func TestSendStdinDraftOnFailure(t *testing.T) {
 		t.Fatalf("失败后 stdin 正文应存草稿: %v", drafts)
 	}
 }
+
+func TestSendStdinDraftOnMembersFailure(t *testing.T) {
+	_, _, proj := setupCLITest(t, "hou", "trio")
+	// 损坏 token → Members 失败（401）→ stdin 内容保存为草稿
+	t.Setenv("RELAIS_CONFIG_DIR", t.TempDir())
+	if err := saveGlobal(&GlobalConfig{Server: "http://127.0.0.1:1", Token: "invalid", Username: "hou"}); err != nil {
+		t.Fatal(err)
+	}
+	old := os.Stdin
+	r, w, _ := os.Pipe()
+	os.Stdin = r
+	w.WriteString("宝贵的正文，不能丢")
+	w.Close()
+	t.Cleanup(func() { os.Stdin = old })
+	err := RunSend([]string{"--summary", "s", "-"})
+	if err == nil {
+		t.Fatal("应失败")
+	}
+	drafts, _ := os.ReadDir(filepath.Join(proj, "relais", "drafts"))
+	if len(drafts) != 1 {
+		t.Fatalf("Members 失败后 stdin 正文应存草稿: %v", drafts)
+	}
+}
