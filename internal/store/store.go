@@ -80,14 +80,10 @@ CREATE TABLE IF NOT EXISTS attachments (
 type Store struct{ db *sql.DB }
 
 func Open(path string) (*Store, error) {
-	db, err := sql.Open("sqlite", path)
+	dsn := path + "?_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)"
+	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, err
-	}
-	for _, pragma := range []string{"PRAGMA journal_mode=WAL", "PRAGMA foreign_keys=ON"} {
-		if _, err := db.Exec(pragma); err != nil {
-			return nil, err
-		}
 	}
 	if _, err := db.Exec(schema); err != nil {
 		return nil, err
