@@ -1,0 +1,232 @@
+// Package store 是 Relais 的唯一事实源：SQLite 存储与全部查询。
+// 双钥匙可见性（spec §5）在本包的查询层强制，handler 只做身份解析。
+package store
+
+import (
+	"crypto/rand"
+	"database/sql"
+	"encoding/hex"
+	"errors"
+	"time"
+
+	"golang.org/x/crypto/bcrypt"
+	_ "modernc.org/sqlite"
+)
+
+var (
+	ErrNotFound  = errors.New("不存在")
+	ErrAuth      = errors.New("用户名或密码错误")
+	ErrForbidden = errors.New("无权访问")
+)
+
+const schema = `
+CREATE TABLE IF NOT EXISTS users (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  username TEXT NOT NULL UNIQUE,
+  display_name TEXT NOT NULL,
+  password_hash TEXT NOT NULL,
+  agent_token TEXT NOT NULL UNIQUE,
+  created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS channels (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL UNIQUE,
+  created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS members (
+  channel_id INTEGER NOT NULL REFERENCES channels(id),
+  user_id INTEGER NOT NULL REFERENCES users(id),
+  joined_at TEXT NOT NULL,
+  PRIMARY KEY (channel_id, user_id)
+);
+CREATE TABLE IF NOT EXISTS messages (
+  id TEXT PRIMARY KEY,
+  channel_id INTEGER NOT NULL REFERENCES channels(id),
+  sender_id INTEGER NOT NULL REFERENCES users(id),
+  summary TEXT NOT NULL,
+  body_md TEXT NOT NULL,
+  in_reply_to TEXT,
+  created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS recipients (
+  message_id TEXT NOT NULL REFERENCES messages(id),
+  user_id INTEGER NOT NULL REFERENCES users(id),
+  read_at TEXT,
+  PRIMARY KEY (message_id, user_id)
+);
+CREATE TABLE IF NOT EXISTS sessions (
+  token TEXT PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id),
+  created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS invites (
+  code TEXT PRIMARY KEY,
+  channel_id INTEGER REFERENCES channels(id),
+  created_by INTEGER NOT NULL REFERENCES users(id),
+  expires_at TEXT NOT NULL,
+  used_at TEXT
+);
+-- attachments 表 M2 才使用（spec §4 数据模型完整性），M1 仅建表
+CREATE TABLE IF NOT EXISTS attachments (
+  id TEXT PRIMARY KEY,
+  message_id TEXT NOT NULL REFERENCES messages(id),
+  filename TEXT NOT NULL,
+  stored_path TEXT NOT NULL,
+  size INTEGER NOT NULL,
+  mime TEXT NOT NULL
+);
+`
+
+type Store struct{ db *sql.DB }
+
+func Open(path string) (*Store, error) {
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		return nil, err
+	}
+	for _, pragma := range []string{"PRAGMA journal_mode=WAL", "PRAGMA foreign_keys=ON"} {
+		if _, err := db.Exec(pragma); err != nil {
+			return nil, err
+		}
+	}
+	if _, err := db.Exec(schema); err != nil {
+		return nil, err
+	}
+	return &Store{db: db}, nil
+}
+
+func (s *Store) Close() error { return s.db.Close() }
+
+func now() string { return time.Now().UTC().Format(time.RFC3339) }
+
+func randomToken(nBytes int) string {
+	b := make([]byte, nBytes)
+	if _, err := rand.Read(b); err != nil {
+		panic(err)
+	}
+	return hex.EncodeToString(b)
+}
+
+type User struct {
+	ID          int64
+	Username    string
+	DisplayName string
+	AgentToken  string
+}
+
+func (s *Store) CreateUser(username, displayName, password string) (*User, error) {
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return nil, err
+	}
+	token := randomToken(24)
+	res, err := s.db.Exec(
+		`INSERT INTO users (username, display_name, password_hash, agent_token, created_at) VALUES (?,?,?,?,?)`,
+		username, displayName, string(hash), token, now())
+	if err != nil {
+		return nil, err
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return nil, err
+	}
+	return &User{ID: id, Username: username, DisplayName: displayName, AgentToken: token}, nil
+}
+
+func (s *Store) scanUser(row *sql.Row) (*User, string, error) {
+	var u User
+	var hash string
+	err := row.Scan(&u.ID, &u.Username, &u.DisplayName, &hash, &u.AgentToken)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, "", ErrNotFound
+	}
+	if err != nil {
+		return nil, "", err
+	}
+	return &u, hash, nil
+}
+
+const userCols = `id, username, display_name, password_hash, agent_token`
+
+func (s *Store) UserByName(username string) (*User, error) {
+	u, _, err := s.scanUser(s.db.QueryRow(`SELECT `+userCols+` FROM users WHERE username=?`, username))
+	return u, err
+}
+
+func (s *Store) UserByAgentToken(token string) (*User, error) {
+	u, _, err := s.scanUser(s.db.QueryRow(`SELECT `+userCols+` FROM users WHERE agent_token=?`, token))
+	return u, err
+}
+
+func (s *Store) Authenticate(username, password string) (*User, error) {
+	u, hash, err := s.scanUser(s.db.QueryRow(`SELECT `+userCols+` FROM users WHERE username=?`, username))
+	if errors.Is(err, ErrNotFound) {
+		return nil, ErrAuth
+	}
+	if err != nil {
+		return nil, err
+	}
+	if bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)) != nil {
+		return nil, ErrAuth
+	}
+	return u, nil
+}
+
+type Channel struct {
+	ID   int64
+	Name string
+}
+
+func (s *Store) CreateChannel(name string) (*Channel, error) {
+	res, err := s.db.Exec(`INSERT INTO channels (name, created_at) VALUES (?,?)`, name, now())
+	if err != nil {
+		return nil, err
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return nil, err
+	}
+	return &Channel{ID: id, Name: name}, nil
+}
+
+func (s *Store) ChannelByName(name string) (*Channel, error) {
+	var c Channel
+	err := s.db.QueryRow(`SELECT id, name FROM channels WHERE name=?`, name).Scan(&c.ID, &c.Name)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &c, nil
+}
+
+func (s *Store) AddMember(channelID, userID int64) error {
+	_, err := s.db.Exec(`INSERT OR IGNORE INTO members (channel_id, user_id, joined_at) VALUES (?,?,?)`,
+		channelID, userID, now())
+	return err
+}
+
+func (s *Store) ListMembers(channelID int64) ([]User, error) {
+	rows, err := s.db.Query(`SELECT u.id, u.username, u.display_name, u.agent_token
+		FROM members m JOIN users u ON u.id=m.user_id WHERE m.channel_id=? ORDER BY u.username`, channelID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []User
+	for rows.Next() {
+		var u User
+		if err := rows.Scan(&u.ID, &u.Username, &u.DisplayName, &u.AgentToken); err != nil {
+			return nil, err
+		}
+		out = append(out, u)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) IsMember(channelID, userID int64) (bool, error) {
+	var n int
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM members WHERE channel_id=? AND user_id=?`, channelID, userID).Scan(&n)
+	return n > 0, err
+}
