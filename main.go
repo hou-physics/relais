@@ -32,6 +32,12 @@ func run(args []string) error {
 		return cli.RunInit(args[1:])
 	case "send":
 		return cli.RunSend(args[1:])
+	case "inbox":
+		return cli.RunInbox(args[1:])
+	case "pull":
+		return cli.RunPull(args[1:])
+	case "members":
+		return cli.RunMembers(args[1:])
 	case "agent-guide":
 		return cli.RunGuide(args[1:])
 	case "user":
