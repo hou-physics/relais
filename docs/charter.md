@@ -5,4 +5,4 @@
 - **命名**：术语表 = spec §2（频道/信封/摘要/正文/双钥匙/串台），全项目同名；Go 包名小写单词。
 - **环境**：Go ≥1.22，`CGO_ENABLED=0`；依赖白名单见计划 Global Constraints。
 - **事实源矩阵**：设计=spec（`docs/superpowers/specs/`）；决策=`docs/decisions.md`（只增）；工程约定=本章程；消息数据=服务器 SQLite（本地文件是快照）。
-- **IGNORE**：`dist/`（可再生构建产物，再生命令 `deploy/deploy.sh build`）、`*.db*`（本地测试数据）。
+- **IGNORE**：`dist/`（可再生构建产物，再生命令 `deploy/deploy.sh build`）、`*.db*`（本地测试数据）、`/relais` 与 `relais.exe`（本地编译产物）。

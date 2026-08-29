@@ -207,6 +207,33 @@ func TestSessions(t *testing.T) {
 	}
 }
 
+func TestSessionExpiry(t *testing.T) {
+	s := testStore(t)
+	u, _ := s.CreateUser("hou", "Hou", "pw")
+	// 新鲜 session：应可用
+	fresh, err := s.CreateSession(u.ID)
+	if err != nil || fresh == "" {
+		t.Fatal(err)
+	}
+	if got, err := s.UserBySession(fresh); err != nil || got.ID != u.ID {
+		t.Fatalf("新鲜 session 应可用: %v", err)
+	}
+	// 手工插入一条 91 天前创建的过期 session
+	oldToken := "expired-session-token"
+	oldCreated := time.Now().UTC().Add(-91 * 24 * time.Hour).Format(time.RFC3339)
+	if _, err := s.db.Exec(`INSERT INTO sessions (token, user_id, created_at) VALUES (?,?,?)`,
+		oldToken, u.ID, oldCreated); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.UserBySession(oldToken); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("超过 90 天的 session 应被拒（ErrNotFound）, got %v", err)
+	}
+	// 新鲜 session 依然可用（确认没有误伤）
+	if got, err := s.UserBySession(fresh); err != nil || got.ID != u.ID {
+		t.Fatalf("新鲜 session 在过期检查加入后仍应可用: %v", err)
+	}
+}
+
 func TestInvites(t *testing.T) {
 	s := testStore(t)
 	u, _ := s.CreateUser("hou", "Hou", "pw")

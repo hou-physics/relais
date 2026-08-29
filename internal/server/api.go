@@ -122,12 +122,17 @@ func (s *Server) handleSend(w http.ResponseWriter, r *http.Request, p principal)
 		names = append(names, m.Username)
 	}
 	var toIDs []int64
+	seen := map[int64]bool{}
 	for _, name := range req.To {
 		id, ok := byName[name]
 		if !ok {
 			writeErr(w, http.StatusBadRequest, "收件人 %q 不是频道成员；有效成员：%s", name, strings.Join(names, ", "))
 			return
 		}
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
 		toIDs = append(toIDs, id)
 	}
 	if len(toIDs) == 0 {

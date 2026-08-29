@@ -47,6 +47,6 @@ func run(args []string) error {
 	case "invite":
 		return cli.RunInvite(args[1:])
 	default:
-		return fmt.Errorf("未知子命令 %q（version 之外的命令在后续任务实现）", args[0])
+		return fmt.Errorf("未知子命令 %q", args[0])
 	}
 }

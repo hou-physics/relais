@@ -9,12 +9,13 @@
 5. 拷 `deploy/relais.service` → `/etc/systemd/system/`，`sudo systemctl enable relais`。
 6. 本机跑 `deploy/deploy.sh ship user@server`。
 7. 服务器上建首个账号与频道：
-   `relais user add hou --display Hou --config /etc/relais/server.toml`
-   `relais channel create <频道名> --config /etc/relais/server.toml`
-   `relais channel add <频道名> hou --config /etc/relais/server.toml`
-   `relais invite --channel <频道名> --config /etc/relais/server.toml` → 把链接微信发给同伴。
+   `sudo relais user add hou --display Hou --config /etc/relais/server.toml`
+   `sudo relais channel create <频道名> --config /etc/relais/server.toml`
+   `sudo relais channel add <频道名> hou --config /etc/relais/server.toml`
+   `sudo relais invite --channel <频道名> --config /etc/relais/server.toml` → 把链接微信发给同伴。
 8. 备份：拷 `deploy/backup.sh` → `/usr/local/bin/relais-backup.sh`，`chmod +x`，
-   `crontab -e` 加 `20 4 * * * /usr/local/bin/relais-backup.sh`。
+   `sudo crontab -e` 加 `20 4 * * * /usr/local/bin/relais-backup.sh`。
+9. 验证实时性：两个浏览器分别登录两个账号互发一条消息，确认秒级出现（SSE 经 Caddy 正常）。
 
 ## 日常
 - 升级：本机 `deploy/deploy.sh ship user@server`（自动重启，秒级中断）。

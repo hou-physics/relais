@@ -101,12 +101,23 @@ async function refresh() {
 function renderMsg(m) {
   const div = document.createElement("div");
   div.className = "msg" + (m.from === me.username ? " mine" : "");
+  div.dataset.id = m.id;
   const head = document.createElement("div");
   head.className = "head";
   head.innerHTML = `<span class="from"></span><span class="to"></span><time></time>`;
   head.querySelector(".from").textContent = m.from_display;
   head.querySelector(".to").textContent = "→ " + m.to.join(", ");
   head.querySelector("time").textContent = new Date(m.created_at).toLocaleString("zh-CN");
+  div.append(head);
+  if (m.in_reply_to) {
+    const replyBtn = document.createElement("button");
+    replyBtn.className = "toggle";
+    replyBtn.textContent = "↩ 回复 " + m.in_reply_to.slice(0, 8) + "…";
+    replyBtn.onclick = () => {
+      document.querySelector('.msg[data-id="' + m.in_reply_to + '"]')?.scrollIntoView({ behavior: "smooth", block: "center" });
+    };
+    div.append(replyBtn);
+  }
   const sum = document.createElement("div");
   sum.className = "summary"; sum.textContent = m.summary;
   const toggle = document.createElement("button");
@@ -122,7 +133,7 @@ function renderMsg(m) {
       body.hidden = false; toggle.textContent = "收起 ▴";
     } else { body.hidden = true; toggle.textContent = "展开正文 ▾"; }
   };
-  div.append(head, sum, toggle, body);
+  div.append(sum, toggle, body);
   return div;
 }
 

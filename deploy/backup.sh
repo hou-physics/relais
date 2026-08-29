@@ -6,5 +6,5 @@ BACKUP_DIR=/var/backups/relais
 mkdir -p "$BACKUP_DIR"
 day=$(date +%F)
 sqlite3 "$DATA_DIR/relais.db" ".backup '$BACKUP_DIR/relais-$day.db'"
-tar -czf "$BACKUP_DIR/files-$day.tgz" -C "$DATA_DIR" --exclude=relais.db --exclude='relais.db-*' .
+tar -czf "$BACKUP_DIR/files-$day.tgz" -C "$DATA_DIR" --exclude=relais.db --exclude='relais.db-*' --exclude=downloads .
 find "$BACKUP_DIR" -type f -mtime +14 -delete

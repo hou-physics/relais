@@ -21,7 +21,7 @@ case "${1:-}" in
     ./scripts/check.sh
     scp dist/relais-linux-amd64 "$2:/tmp/relais-new"
     scp dist/relais-darwin-arm64 dist/relais-darwin-amd64 dist/relais-windows-amd64.exe \
-        "$2:/var/lib/relais/downloads/" || echo "（downloads 目录不存在则先在服务器 mkdir -p /var/lib/relais/downloads）"
+        "$2:/var/lib/relais/downloads/" || echo "（上传 downloads 失败：请确认服务器已 mkdir -p /var/lib/relais/downloads 且当前 ssh 用户有写权限，或用 sudo 手动拷贝)"
     ssh "$2" 'sudo install -m755 /tmp/relais-new /usr/local/bin/relais && sudo systemctl restart relais && systemctl is-active relais'
     echo "部署完成"
     ;;

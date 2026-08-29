@@ -440,9 +440,11 @@ func (s *Store) CreateSession(userID int64) (string, error) {
 	return token, err
 }
 
+// UserBySession 查找 session 对应的用户，拒绝超过 90 天的老 session（服务端强制过期）。
 func (s *Store) UserBySession(token string) (*User, error) {
+	cutoff := time.Now().UTC().Add(-90 * 24 * time.Hour).Format(time.RFC3339)
 	u, _, err := s.scanUser(s.db.QueryRow(`SELECT `+userCols+` FROM users u
-		JOIN sessions se ON se.user_id=u.id WHERE se.token=?`, token))
+		JOIN sessions se ON se.user_id=u.id WHERE se.token=? AND se.created_at > ?`, token, cutoff))
 	return u, err
 }
 

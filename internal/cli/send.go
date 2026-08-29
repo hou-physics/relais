@@ -100,9 +100,13 @@ func RunSend(args []string) error {
 	copyPath := filepath.Join(root, "relais", "sent", localName(sent.ID, sent.CreatedAt, cfg.Username))
 	env := msg.Envelope{ID: sent.ID, Channel: sent.Channel, From: sent.From, To: sent.To,
 		InReplyTo: sent.InReplyTo, Sent: sent.CreatedAt, Summary: sent.Summary}
-	os.WriteFile(copyPath, msg.Render(env, string(body)), 0o644)
-	fmt.Printf("已发送 → %s（频道 %s，id %s）\n本地副本: %s\n",
-		strings.Join(sent.To, ", "), sent.Channel, sent.ID, copyPath)
+	if werr := os.WriteFile(copyPath, msg.Render(env, string(body)), 0o644); werr != nil {
+		fmt.Printf("已发送 → %s（频道 %s，id %s）\n", strings.Join(sent.To, ", "), sent.Channel, sent.ID)
+		fmt.Printf("警告：本地副本写入失败: %v\n", werr)
+	} else {
+		fmt.Printf("已发送 → %s（频道 %s，id %s）\n本地副本: %s\n",
+			strings.Join(sent.To, ", "), sent.Channel, sent.ID, copyPath)
+	}
 	return nil
 }
 

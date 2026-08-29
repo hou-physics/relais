@@ -59,7 +59,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	http.SetCookie(w, &http.Cookie{
 		Name: "relais_session", Value: token, Path: "/",
-		HttpOnly: true, SameSite: http.SameSiteLaxMode, MaxAge: 60 * 60 * 24 * 90,
+		HttpOnly: true, Secure: true, SameSite: http.SameSiteLaxMode, MaxAge: 60 * 60 * 24 * 90,
 	})
 	writeJSON(w, http.StatusOK, api.Me{Username: u.Username, DisplayName: u.DisplayName, Key: "human"})
 }
