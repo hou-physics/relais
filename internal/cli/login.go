@@ -9,15 +9,18 @@ import (
 )
 
 func RunLogin(args []string) error {
-	fs := flag.NewFlagSet("login", flag.ContinueOnError)
-	token := fs.String("token", "", "你的 agent token（邀请页上有）")
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	if fs.NArg() != 1 || *token == "" {
+	if len(args) < 1 || strings.HasPrefix(args[0], "-") {
 		return fmt.Errorf("用法: relais login <服务器地址> --token <token>")
 	}
-	server := strings.TrimRight(fs.Arg(0), "/")
+	server := strings.TrimRight(args[0], "/")
+	fs := flag.NewFlagSet("login", flag.ContinueOnError)
+	token := fs.String("token", "", "你的 agent token（邀请页上有）")
+	if err := fs.Parse(args[1:]); err != nil {
+		return err
+	}
+	if *token == "" {
+		return fmt.Errorf("用法: relais login <服务器地址> --token <token>")
+	}
 	c := &Client{Server: server, Token: *token, hc: &http.Client{Timeout: 30 * time.Second}}
 	me, err := c.Me()
 	if err != nil {
