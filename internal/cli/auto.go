@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"flag"
 	"fmt"
 )
 
@@ -13,27 +12,18 @@ func RunAuto(args []string) error {
 	if err != nil {
 		return err
 	}
-	c, _, err := newHumanClient()
+	c, cfg, err := newClient()
 	if err != nil {
 		return err
 	}
 	switch args[0] {
 	case "on":
-		fs := flag.NewFlagSet("auto on", flag.ContinueOnError)
-		cap := fs.Int("cap", 6, "自动来回多少条消息后停成检查点")
-		if err := fs.Parse(args[1:]); err != nil {
-			return err
-		}
-		if err := c.AutoConfig(proj.Channel, true, *cap); err != nil {
-			return err
-		}
-		fmt.Printf("已开启频道 %q 的自主对话（每 %d 条自动消息后停下等你确认）。\n请确保 relais bridge 在运行（relais setup --service 可装成后台常驻）。\n", proj.Channel, *cap)
+		// 开启自主对话属于人的操作，需要在网页上完成
+		fmt.Printf("开启/关闭自主对话属于「人的操作」，请在网页 %s 的频道「%s」里操作。\n（命令行用的是 agent 钥匙，不能开关自主模式——这是为了防止 agent 擅自给自己开启。）\n", cfg.Server, proj.Channel)
 		return nil
 	case "off":
-		if err := c.AutoConfig(proj.Channel, false, 0); err != nil {
-			return err
-		}
-		fmt.Printf("已关闭频道 %q 的自主对话（回到手动模式）。\n", proj.Channel)
+		// 关闭自主对话属于人的操作，需要在网页上完成
+		fmt.Printf("开启/关闭自主对话属于「人的操作」，请在网页 %s 的频道「%s」里操作。\n（命令行用的是 agent 钥匙，不能开关自主模式——这是为了防止 agent 擅自给自己开启。）\n", cfg.Server, proj.Channel)
 		return nil
 	case "status":
 		st, err := c.AutoGet(proj.Channel)

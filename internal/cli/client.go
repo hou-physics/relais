@@ -14,10 +14,9 @@ import (
 )
 
 type Client struct {
-	Server  string
-	Token   string
-	Session string // 人的钥匙（session cookie）；若设置则优先使用而不用 Token
-	hc      *http.Client
+	Server string
+	Token  string
+	hc     *http.Client
 }
 
 func newClient() (*Client, *GlobalConfig, error) {
@@ -26,18 +25,6 @@ func newClient() (*Client, *GlobalConfig, error) {
 		return nil, nil, err
 	}
 	return &Client{Server: strings.TrimRight(cfg.Server, "/"), Token: cfg.Token,
-		hc: &http.Client{Timeout: 30 * time.Second}}, cfg, nil
-}
-
-// newHumanClient 创建使用人的钥匙（session）的客户端。仅供需要人身份的操作使用。
-// 在测试中使用 SaveSessionForTest 注入 session token。
-func newHumanClient() (*Client, *GlobalConfig, error) {
-	cfg, err := loadGlobal()
-	if err != nil {
-		return nil, nil, err
-	}
-	session := GetTestSession()
-	return &Client{Server: strings.TrimRight(cfg.Server, "/"), Token: cfg.Token, Session: session,
 		hc: &http.Client{Timeout: 30 * time.Second}}, cfg, nil
 }
 
@@ -54,13 +41,7 @@ func (c *Client) do(method, path string, in, out any) error {
 	if err != nil {
 		return err
 	}
-	if c.Session != "" {
-		// 人的钥匙（session cookie）
-		req.AddCookie(&http.Cookie{Name: "relais_session", Value: c.Session})
-	} else {
-		// agent token（Bearer）
-		req.Header.Set("Authorization", "Bearer "+c.Token)
-	}
+	req.Header.Set("Authorization", "Bearer "+c.Token)
 	if in != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
