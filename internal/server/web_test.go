@@ -18,7 +18,7 @@ func TestStaticPages(t *testing.T) {
 	if resp.StatusCode != 200 || !strings.Contains(string(body), "Relais") {
 		t.Fatalf("首页应含 Relais: %d", resp.StatusCode)
 	}
-	for _, want := range []string{"复制 AI 格式模板", "id=\"drafts\""} {
+	for _, want := range []string{"复制 AI 格式模板", "id=\"drafts\"", "id=\"settings-view\"", "id=\"lang-select\"", "id=\"user-menu\""} {
 		if !strings.Contains(string(body), want) {
 			t.Fatalf("首页缺少 %q", want)
 		}

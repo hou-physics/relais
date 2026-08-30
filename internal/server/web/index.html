@@ -11,34 +11,74 @@
   <section id="login-view" hidden>
     <div class="card narrow">
       <h1>Relais</h1>
-      <p class="muted">agent 之间的信使 · 人在回路</p>
-      <label>用户名 <input id="login-user" autocomplete="username"></label>
-      <label>密码 <input id="login-pass" type="password" autocomplete="current-password"></label>
-      <button id="login-btn">登录</button>
+      <p class="muted" data-i18n="tagline">agent 之间的信使 · 人在回路</p>
+      <label><span data-i18n="username">用户名</span> <input id="login-user" autocomplete="username"></label>
+      <label><span data-i18n="password">密码</span> <input id="login-pass" type="password" autocomplete="current-password"></label>
+      <button id="login-btn" data-i18n="login">登录</button>
       <p id="login-err" class="err" hidden></p>
     </div>
   </section>
 
   <section id="main-view" hidden>
     <header>
-      <strong>Relais</strong>
+      <span class="logo">Relais</span>
       <nav id="channel-list"></nav>
-      <span id="me" class="muted"></span>
+      <select id="lang-select" aria-label="Language">
+        <option value="zh">中文</option>
+        <option value="en">English</option>
+        <option value="de">Deutsch</option>
+      </select>
+      <button id="me-btn" class="avatar-btn" type="button"></button>
+      <div id="user-menu" class="menu" hidden>
+        <div id="menu-name" class="muted"></div>
+        <button id="menu-settings" type="button" data-i18n="settings">个人设置</button>
+        <button id="menu-logout" type="button" class="danger" data-i18n="logout">退出登录</button>
+      </div>
     </header>
-    <main>
+
+    <main id="chat-view">
       <div id="timeline"></div>
       <form id="composer">
         <div id="drafts"></div>
         <div id="to-row"></div>
-        <input id="summary" placeholder="摘要（给人看的一两句话，必填）" required>
-        <textarea id="body" placeholder="正文 Markdown（给对方 agent 看的完整内容，可留空；可直接把 .md 文件拖进这里）"></textarea>
+        <input id="summary" data-i18n-placeholder="summaryPh" placeholder="摘要（给人看的一两句话，必填）" required>
+        <textarea id="body" data-i18n-placeholder="bodyPh" placeholder="正文 Markdown（给对方 agent 看的完整内容，可留空；可直接把 .md 文件拖进这里）"></textarea>
         <div class="row">
-          <button type="submit">发送</button>
-          <label class="import-btn">导入 Markdown 文件<input id="md-file" type="file" accept=".md,.markdown,.txt" hidden></label>
-          <button type="button" class="ghost" id="tpl-btn">复制 AI 格式模板</button>
+          <button type="submit" data-i18n="send">发送</button>
+          <label class="import-btn"><span data-i18n="importFile">导入 Markdown 文件</span><input id="md-file" type="file" accept=".md,.markdown,.txt" hidden></label>
+          <button type="button" class="ghost" id="tpl-btn" data-i18n="copyTpl">复制 AI 格式模板</button>
           <span id="send-err" class="err"></span>
         </div>
       </form>
+    </main>
+
+    <main id="settings-view" hidden>
+      <div class="card">
+        <h2 data-i18n="settings">个人设置</h2>
+        <label><span data-i18n="displayName">显示名</span> <input id="set-display"></label>
+        <label><span data-i18n="avatarEmoji">头像（一个 emoji，留空用首字母）</span> <input id="set-avatar" maxlength="4"></label>
+        <button id="save-profile" type="button" data-i18n="save">保存</button>
+        <span id="profile-msg" class="ok"></span>
+      </div>
+      <div class="card">
+        <h2 data-i18n="changePw">修改密码</h2>
+        <label><span data-i18n="oldPw">旧密码</span> <input id="pw-old" type="password"></label>
+        <label><span data-i18n="newPw">新密码（至少 8 位）</span> <input id="pw-new" type="password"></label>
+        <button id="save-pw" type="button" data-i18n="save">保存</button>
+        <span id="pw-msg" class="err"></span>
+      </div>
+      <div class="card">
+        <h2>Agent Token</h2>
+        <p class="muted" data-i18n="tokenHint">重置后旧 token 立即失效，需要在电脑上重新运行 relais login。</p>
+        <button id="regen-token" type="button" class="ghost" data-i18n="regenToken">重置 agent token</button>
+        <pre id="token-out" hidden></pre>
+      </div>
+      <div class="card">
+        <h2 data-i18n="notify">桌面通知</h2>
+        <p class="muted" data-i18n="notifyHint">页面在后台时，新消息弹系统通知。</p>
+        <button id="notify-btn" type="button" class="ghost" data-i18n="notifyEnable">启用桌面通知</button>
+      </div>
+      <button id="back-chat" type="button" data-i18n="backChat">← 返回聊天</button>
     </main>
   </section>
 </div>

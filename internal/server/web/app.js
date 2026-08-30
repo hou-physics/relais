@@ -16,6 +16,23 @@ function md(text) {
   return DOMPurify.sanitize(marked.parse(text || ""));
 }
 
+const AVATAR_COLORS = ["#2563eb", "#0d9488", "#dc2626", "#d97706", "#475569", "#16a34a"];
+function avatarNode(username, displayName, avatar) {
+  const el = document.createElement("span");
+  el.className = "avatar";
+  if (avatar) {
+    el.textContent = avatar;
+    el.style.background = "transparent";
+    el.style.fontSize = "20px";
+  } else {
+    let h = 0;
+    for (const ch of username) h = (h * 31 + ch.codePointAt(0)) >>> 0;
+    el.style.background = AVATAR_COLORS[h % AVATAR_COLORS.length];
+    el.textContent = (displayName || username).slice(0, 1).toUpperCase();
+  }
+  return el;
+}
+
 // 轻量 frontmatter 解析：只认最前面的 --- 块里的 summary 行
 function parseFrontmatter(text) {
   const m = text.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?/);
@@ -63,7 +80,10 @@ async function boot() {
     me = await api("/api/me");
     $("login-view").hidden = true;
     $("main-view").hidden = false;
-    $("me").textContent = me.display_name + "（" + me.username + "）";
+    const btn = $("me-btn");
+    btn.innerHTML = "";
+    btn.append(avatarNode(me.username, me.display_name, me.avatar));
+    $("menu-name").textContent = me.display_name + "（" + me.username + "）";
     await loadChannels();
   } catch {
     $("login-view").hidden = false;
@@ -170,7 +190,7 @@ function renderToRow() {
     const cb = document.createElement("input");
     cb.type = "checkbox"; cb.value = m.username;
     cb.checked = others.length === 1; // 双人频道默认对方
-    label.append(cb, " " + m.display_name);
+    label.append(cb, avatarNode(m.username, m.display_name, m.avatar || ""));
     row.appendChild(label);
   }
 }
@@ -195,6 +215,7 @@ function renderMsg(m) {
   const head = document.createElement("div");
   head.className = "head";
   head.innerHTML = `<span class="from"></span><span class="to"></span><time></time>`;
+  head.prepend(avatarNode(m.from, m.from_display, m.from_avatar || ""));
   head.querySelector(".from").textContent = m.from_display;
   head.querySelector(".to").textContent = "→ " + m.to.join(", ");
   head.querySelector("time").textContent = new Date(m.created_at).toLocaleString("zh-CN");
@@ -302,5 +323,54 @@ $("composer").addEventListener("submit", async (e) => {
 });
 
 $("tpl-btn").addEventListener("click", () => copyText($("tpl-btn"), aiTemplate()));
+
+$("me-btn").addEventListener("click", () => { $("user-menu").hidden = !$("user-menu").hidden; });
+document.addEventListener("click", (e) => {
+  if (!$("user-menu").hidden && !$("user-menu").contains(e.target) && e.target !== $("me-btn") && !$("me-btn").contains(e.target)) {
+    $("user-menu").hidden = true;
+  }
+});
+function showView(name) {
+  $("chat-view").hidden = name !== "chat";
+  $("settings-view").hidden = name !== "settings";
+  $("user-menu").hidden = true;
+}
+$("menu-settings").addEventListener("click", () => {
+  $("set-display").value = me.display_name;
+  $("set-avatar").value = me.avatar || "";
+  showView("settings");
+});
+$("back-chat").addEventListener("click", () => showView("chat"));
+$("menu-logout").addEventListener("click", async () => {
+  try { await api("/api/logout", { method: "POST" }); } catch {}
+  location.reload();
+});
+$("save-profile").addEventListener("click", async () => {
+  try {
+    me = await api("/api/settings/profile", { method: "POST",
+      body: JSON.stringify({ display_name: $("set-display").value.trim(), avatar: $("set-avatar").value.trim() }) });
+    $("profile-msg").textContent = "✓";
+    setTimeout(() => { $("profile-msg").textContent = ""; }, 1500);
+    const btn = $("me-btn");
+    btn.innerHTML = "";
+    btn.append(avatarNode(me.username, me.display_name, me.avatar));
+  } catch (e) { $("profile-msg").textContent = e.message; }
+});
+$("save-pw").addEventListener("click", async () => {
+  try {
+    await api("/api/settings/password", { method: "POST",
+      body: JSON.stringify({ old: $("pw-old").value, new: $("pw-new").value }) });
+    $("pw-old").value = ""; $("pw-new").value = "";
+    $("pw-msg").className = "ok"; $("pw-msg").textContent = "✓";
+  } catch (e) { $("pw-msg").className = "err"; $("pw-msg").textContent = e.message; }
+});
+$("regen-token").addEventListener("click", async () => {
+  try {
+    const tr = await api("/api/settings/token", { method: "POST" });
+    const out = $("token-out");
+    out.hidden = false;
+    out.textContent = "relais login " + location.origin + " --token " + tr.agent_token;
+  } catch (e) { $("pw-msg").textContent = e.message; }
+});
 
 boot();
