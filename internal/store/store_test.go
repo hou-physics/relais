@@ -427,3 +427,72 @@ func TestAllChannelsAndRemoveMember(t *testing.T) {
 		t.Fatalf("移除不存在的成员应 ErrNotFound, got %v", err)
 	}
 }
+
+func TestAutoStateGovernance(t *testing.T) {
+	s := testStore(t)
+	ch, _ := s.CreateChannel("c")
+	// 默认关闭
+	st, err := s.GetAuto(ch.ID)
+	if err != nil || st.Enabled || st.Cap != 6 {
+		t.Fatalf("默认应关闭 cap6: %+v %v", st, err)
+	}
+	// 关闭时 turn 被拒
+	if ok, _, _ := s.RequestTurn(ch.ID); ok {
+		t.Fatal("未开启不应放行 turn")
+	}
+	// 开启 cap=2
+	if err := s.SetAutoEnabled(ch.ID, true, 2); err != nil {
+		t.Fatal(err)
+	}
+	if ok, _, _ := s.RequestTurn(ch.ID); !ok {
+		t.Fatal("第1轮应放行")
+	}
+	if ok, _, _ := s.RequestTurn(ch.ID); !ok {
+		t.Fatal("第2轮应放行")
+	}
+	if ok, reason, _ := s.RequestTurn(ch.ID); ok || reason == "" {
+		t.Fatalf("第3轮应被拒(到检查点): ok=%v reason=%q", ok, reason)
+	}
+	// resume 重置回合
+	if err := s.ResumeAuto(ch.ID); err != nil {
+		t.Fatal(err)
+	}
+	if ok, _, _ := s.RequestTurn(ch.ID); !ok {
+		t.Fatal("resume 后应重新放行")
+	}
+	// needs-human 立即暂停
+	if err := s.SetNeedsHuman(ch.ID, "预算是多少？"); err != nil {
+		t.Fatal(err)
+	}
+	st, _ = s.GetAuto(ch.ID)
+	if !st.Paused || st.NeedsHumanQ != "预算是多少？" {
+		t.Fatalf("needs-human 应暂停并记录问题: %+v", st)
+	}
+	if ok, _, _ := s.RequestTurn(ch.ID); ok {
+		t.Fatal("needs-human 暂停时不应放行")
+	}
+	// pause/resume
+	s.ResumeAuto(ch.ID)
+	s.PauseAuto(ch.ID)
+	if ok, _, _ := s.RequestTurn(ch.ID); ok {
+		t.Fatal("手动暂停时不应放行")
+	}
+}
+
+func TestGuidance(t *testing.T) {
+	s := testStore(t)
+	ch, _ := s.CreateChannel("c")
+	a, _ := s.CreateUser("hou", "Hou", "pw123456")
+	if g, _ := s.PullGuidance(ch.ID, a.ID); g != "" {
+		t.Fatal("初始无引导")
+	}
+	s.SetGuidance(ch.ID, a.ID, "优先考虑成本")
+	s.SetGuidance(ch.ID, a.ID, "改为优先考虑上线速度") // 覆盖
+	g, err := s.PullGuidance(ch.ID, a.ID)
+	if err != nil || g != "改为优先考虑上线速度" {
+		t.Fatalf("应取到最新引导: %q %v", g, err)
+	}
+	if g2, _ := s.PullGuidance(ch.ID, a.ID); g2 != "" {
+		t.Fatalf("取后应清空: %q", g2)
+	}
+}

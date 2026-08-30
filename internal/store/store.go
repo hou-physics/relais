@@ -90,6 +90,21 @@ CREATE TABLE IF NOT EXISTS drafts (
   in_reply_to TEXT,
   created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS channel_auto (
+  channel_id INTEGER PRIMARY KEY REFERENCES channels(id),
+  enabled INTEGER NOT NULL DEFAULT 0,
+  round_count INTEGER NOT NULL DEFAULT 0,
+  cap INTEGER NOT NULL DEFAULT 6,
+  paused INTEGER NOT NULL DEFAULT 0,
+  needs_human_q TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS guidance (
+  channel_id INTEGER NOT NULL REFERENCES channels(id),
+  user_id INTEGER NOT NULL REFERENCES users(id),
+  note TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (channel_id, user_id)
+);
 `
 
 type Store struct{ db *sql.DB }
@@ -720,4 +735,114 @@ func (s *Store) RemoveMember(channelID, userID int64) error {
 		return ErrNotFound
 	}
 	return nil
+}
+
+type AutoState struct {
+	Enabled     bool
+	RoundCount  int
+	Cap         int
+	Paused      bool
+	NeedsHumanQ string
+}
+
+func (s *Store) GetAuto(channelID int64) (AutoState, error) {
+	var a AutoState
+	var en, paused int
+	err := s.db.QueryRow(`SELECT enabled, round_count, cap, paused, needs_human_q FROM channel_auto WHERE channel_id=?`, channelID).
+		Scan(&en, &a.RoundCount, &a.Cap, &paused, &a.NeedsHumanQ)
+	if errors.Is(err, sql.ErrNoRows) {
+		return AutoState{Enabled: false, Cap: 6}, nil
+	}
+	if err != nil {
+		return a, err
+	}
+	a.Enabled = en == 1
+	a.Paused = paused == 1
+	return a, nil
+}
+
+func (s *Store) SetAutoEnabled(channelID int64, enabled bool, cap int) error {
+	en := 0
+	if enabled {
+		en = 1
+	}
+	if cap < 1 {
+		cap = 6
+	}
+	_, err := s.db.Exec(`INSERT INTO channel_auto (channel_id, enabled, round_count, cap, paused, needs_human_q)
+		VALUES (?,?,0,?,0,'')
+		ON CONFLICT(channel_id) DO UPDATE SET enabled=excluded.enabled, cap=excluded.cap, round_count=0, paused=0, needs_human_q=''`,
+		channelID, en, cap)
+	return err
+}
+
+func (s *Store) RequestTurn(channelID int64) (bool, string, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return false, "", err
+	}
+	defer tx.Rollback()
+	var en, paused, round, cap int
+	var q string
+	err = tx.QueryRow(`SELECT enabled, paused, round_count, cap, needs_human_q FROM channel_auto WHERE channel_id=?`, channelID).
+		Scan(&en, &paused, &round, &cap, &q)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, "自动模式未开启", nil
+	}
+	if err != nil {
+		return false, "", err
+	}
+	if en != 1 {
+		return false, "自动模式未开启", nil
+	}
+	if paused == 1 || q != "" {
+		return false, "已暂停（等待人处理）", nil
+	}
+	if round >= cap {
+		return false, "已到检查点（等待人确认继续）", nil
+	}
+	if _, err := tx.Exec(`UPDATE channel_auto SET round_count=round_count+1 WHERE channel_id=?`, channelID); err != nil {
+		return false, "", err
+	}
+	if err := tx.Commit(); err != nil {
+		return false, "", err
+	}
+	return true, "", nil
+}
+
+func (s *Store) PauseAuto(channelID int64) error {
+	_, err := s.db.Exec(`UPDATE channel_auto SET paused=1 WHERE channel_id=?`, channelID)
+	return err
+}
+
+func (s *Store) ResumeAuto(channelID int64) error {
+	_, err := s.db.Exec(`UPDATE channel_auto SET paused=0, round_count=0, needs_human_q='' WHERE channel_id=?`, channelID)
+	return err
+}
+
+func (s *Store) SetNeedsHuman(channelID int64, q string) error {
+	_, err := s.db.Exec(`UPDATE channel_auto SET paused=1, needs_human_q=? WHERE channel_id=?`, q, channelID)
+	return err
+}
+
+func (s *Store) SetGuidance(channelID, userID int64, note string) error {
+	_, err := s.db.Exec(`INSERT INTO guidance (channel_id, user_id, note, created_at) VALUES (?,?,?,?)
+		ON CONFLICT(channel_id,user_id) DO UPDATE SET note=excluded.note, created_at=excluded.created_at`,
+		channelID, userID, note, now())
+	return err
+}
+
+func (s *Store) PullGuidance(channelID, userID int64) (string, error) {
+	var note string
+	err := s.db.QueryRow(`SELECT note FROM guidance WHERE channel_id=? AND user_id=?`, channelID, userID).Scan(&note)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	if _, err := s.db.Exec(`DELETE FROM guidance WHERE channel_id=? AND user_id=?`, channelID, userID); err != nil {
+		return "", err
+	}
+	return note, nil
 }
