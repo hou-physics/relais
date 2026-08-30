@@ -6,12 +6,14 @@ import "time"
 type Me struct {
 	Username    string `json:"username"`
 	DisplayName string `json:"display_name"`
+	Avatar      string `json:"avatar"`
 	Key         string `json:"key"` // "human" | "agent"
 }
 
 type Member struct {
 	Username    string `json:"username"`
 	DisplayName string `json:"display_name"`
+	Avatar      string `json:"avatar"`
 }
 
 type ChannelInfo struct {
@@ -24,6 +26,7 @@ type Message struct {
 	Channel     string    `json:"channel"`
 	From        string    `json:"from"`
 	FromDisplay string    `json:"from_display"`
+	FromAvatar  string    `json:"from_avatar,omitempty"`
 	To          []string  `json:"to"`
 	Summary     string    `json:"summary"`
 	Body        string    `json:"body_md,omitempty"`
@@ -69,6 +72,30 @@ type JoinResponse struct {
 	Channel    string `json:"channel,omitempty"`
 	LoginCmd   string `json:"login_cmd"`
 	Guide      string `json:"guide"`
+}
+
+type Draft struct {
+	ID        string    `json:"id"`
+	Channel   string    `json:"channel"`
+	To        []string  `json:"to"`
+	Summary   string    `json:"summary"`
+	Body      string    `json:"body_md"`
+	InReplyTo string    `json:"in_reply_to,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type PasswordRequest struct {
+	Old string `json:"old"`
+	New string `json:"new"`
+}
+
+type ProfileRequest struct {
+	DisplayName string `json:"display_name"`
+	Avatar      string `json:"avatar"`
+}
+
+type TokenResponse struct {
+	AgentToken string `json:"agent_token"`
 }
 
 type ErrorResponse struct {

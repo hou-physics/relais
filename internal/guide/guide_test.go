@@ -9,7 +9,7 @@ func TestTextContainsEssentials(t *testing.T) {
 	txt := Text("wu", "deutschapp")
 	for _, want := range []string{
 		"wu", "deutschapp", "relais inbox", "relais pull", "relais send",
-		"--summary", "先向", "403",
+		"--summary", "先向", "403", "relais draft", "relais bridge",
 	} {
 		if !strings.Contains(txt, want) {
 			t.Fatalf("说明缺少关键内容 %q", want)

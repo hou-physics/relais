@@ -52,3 +52,13 @@ func Parse(data []byte) (Envelope, string, error) {
 	body = strings.TrimPrefix(body, "\n")
 	return env, body, nil
 }
+
+// ExtractSummary 尝试从带 frontmatter 的 Markdown 中取出摘要与纯正文。
+// 解析失败或无 summary 时按纯文本对待（ok=false，body=原文），永不报错。
+func ExtractSummary(data []byte) (string, string, bool) {
+	env, body, err := Parse(data)
+	if err != nil || strings.TrimSpace(env.Summary) == "" {
+		return "", string(data), false
+	}
+	return env.Summary, body, true
+}
