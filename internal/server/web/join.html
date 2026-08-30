@@ -60,7 +60,11 @@ const J18N = {
     noCliTab: "我不用命令行（网页版 ChatGPT 等聊天 AI）",
     noCliHint: "把下面的格式模板发给你的 AI，让它按格式生成消息文件；生成后整段复制（或存成 .md 文件），拖进 Relais 网页的发送框——摘要会自动填好。",
     done: "完成！打开 Relais 网页用刚才的用户名密码登录。",
-    pwa: "小提示：浏览器菜单里选「安装应用」，Relais 就会像独立软件一样出现在任务栏/程序坞。" },
+    pwa: "小提示：浏览器菜单里选「安装应用」，Relais 就会像独立软件一样出现在任务栏/程序坞。",
+    joinTarget: "加入后你将进入频道「{channel}」。",
+    joinNoChannel: "创建账号后，请让邀请人把你加进频道。",
+    noDownloads: "（服务器暂未上传安装包，向邀请人索要 relais 程序文件即可）",
+    channelPlaceholder: "<频道名>" },
   en: { title: "You are invited to Relais", checking: "Checking invite…",
     invalid: "This invite link is invalid or expired — ask for a new one.",
     step1: "Step 1 · Create your account", uname: "Username (lowercase letter first; a-z, 0-9, dash)",
@@ -74,7 +78,11 @@ const J18N = {
     noCliTab: "I don't use a CLI (web ChatGPT etc.)",
     noCliHint: "Send the template below to your AI so it generates messages in the right format; then copy the result (or save as .md) and drop it into the Relais composer — the summary fills itself.",
     done: "Done! Open the Relais page and sign in with your new credentials.",
-    pwa: "Tip: use your browser's “Install app” to get Relais as a standalone window." },
+    pwa: "Tip: use your browser's “Install app” to get Relais as a standalone window.",
+    joinTarget: "After joining you'll enter the channel “{channel}”.",
+    joinNoChannel: "After creating your account, ask the inviter to add you to a channel.",
+    noDownloads: "(No installers uploaded yet — ask the inviter for the relais binary.)",
+    channelPlaceholder: "<channel>" },
   de: { title: "Du bist zu Relais eingeladen", checking: "Einladung wird geprüft…",
     invalid: "Dieser Einladungslink ist ungültig oder abgelaufen — bitte um einen neuen.",
     step1: "Schritt 1 · Konto anlegen", uname: "Benutzername (Kleinbuchstabe zuerst; a-z, 0-9, Bindestrich)",
@@ -88,7 +96,11 @@ const J18N = {
     noCliTab: "Ich nutze kein CLI (Web-ChatGPT o. ä.)",
     noCliHint: "Schick deiner KI die Vorlage unten, damit sie Nachrichten im richtigen Format erzeugt; das Ergebnis kopieren (oder als .md speichern) und in das Relais-Eingabefeld ziehen — die Zusammenfassung füllt sich selbst.",
     done: "Fertig! Öffne die Relais-Seite und melde dich an.",
-    pwa: "Tipp: Über „App installieren” im Browser wird Relais ein eigenständiges Fenster." },
+    pwa: "Tipp: Über „App installieren” im Browser wird Relais ein eigenständiges Fenster.",
+    joinTarget: "Nach dem Beitritt kommst du in den Kanal „{channel}“.",
+    joinNoChannel: "Nach dem Anlegen des Kontos bitte den Einladenden, dich einem Kanal hinzuzufügen.",
+    noDownloads: "(Noch keine Installationsdateien hochgeladen — frag den Einladenden nach der relais-Datei.)",
+    channelPlaceholder: "<Kanal>" },
 };
 function detectLang() {
   let saved = null;
@@ -113,15 +125,15 @@ fetch("/api/join/" + code).then(async (r) => {
   if (!r.ok) { $("invite-target").textContent = t("invalid"); $("step1").hidden = true; return; }
   const info = await r.json();
   $("invite-target").textContent = info.channel
-    ? "加入后你将进入频道「" + info.channel + "」。"
-    : "创建账号后，请让邀请人把你加进频道。";
+    ? t("joinTarget").replace("{channel}", info.channel)
+    : t("joinNoChannel");
   const dl = $("downloads");
   for (const d of info.downloads) {
     const a = document.createElement("a");
     a.className = "dl"; a.href = d.url; a.textContent = d.label;
     dl.appendChild(a);
   }
-  if (!info.downloads.length) dl.textContent = "（服务器暂未上传安装包，向邀请人索要 relais 程序文件即可）";
+  if (!info.downloads.length) dl.textContent = t("noDownloads");
 });
 $("j-btn").onclick = async () => {
   const resp = await fetch("/api/join", { method: "POST", headers: {"Content-Type":"application/json"},
@@ -131,7 +143,7 @@ $("j-btn").onclick = async () => {
   if (!resp.ok) { $("j-err").textContent = data.error; $("j-err").hidden = false; return; }
   $("step1").hidden = true;
   $("login-cmd").textContent = data.login_cmd;
-  $("init-cmd").textContent = "relais init " + (data.channel || "<频道名>");
+  $("init-cmd").textContent = "relais init " + (data.channel || t("channelPlaceholder"));
   $("guide").textContent = data.guide;
   $("tpl").textContent = [
     "请把我接下来提供的内容，整理成一个用于 Relais 的 Markdown 消息文件。格式要求：",

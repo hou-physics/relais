@@ -44,10 +44,10 @@ func RunInit(args []string) error {
 	}
 	gitignoreNote := ensureGitignore(root)
 	fmt.Printf(`已绑定频道 %q → %s
-	  relais/config.toml  绑定配置
-	  relais/AGENT.md     agent 使用说明（把它的内容贴进 CLAUDE.md / AGENTS.md，或让 agent 直接读）
-	  relais/inbox|sent|drafts/  消息落盘目录
-	  已登记到本机项目注册表（relais bridge 会自动照看此项目）
+    relais/config.toml  绑定配置
+    relais/AGENT.md     agent 使用说明（把它的内容贴进 CLAUDE.md / AGENTS.md，或让 agent 直接读）
+    relais/inbox|sent|drafts/  消息落盘目录
+    已登记到本机项目注册表（relais bridge 会自动照看此项目）
 %s`, channel, cfg.Server, gitignoreNote)
 	return nil
 }

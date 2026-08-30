@@ -38,6 +38,8 @@ Hou 的 Mac                    香港 VPS                     伙伴的 Windows
 | `relais pull [编号]` | 拉取消息到本地 relais/inbox/ |
 | `relais bridge` | 启动本地桥接，自动拉新消息 |
 
+⚠️ Windows：不要在 --hook 命令行里直接写 %RELAIS_MSG_*%（cmd 会在解析前展开，恶意摘要可能注入命令）；请在脚本内部读取环境变量。Unix 的 $VAR 在运行时展开、不会被二次解析，是安全的。
+
 ## 消息格式
 
 发送的 Markdown 文件头用 YAML frontmatter 指定摘要（若 CLI 无 `--summary` 参数）：

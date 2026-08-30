@@ -8,9 +8,11 @@ CGO_ENABLED=0 go build ./...
 go test ./...
 if command -v node >/dev/null 2>&1; then
   node --check internal/server/web/app.js
-  tmpjs=$(mktemp).js
+  tmpjs=$(mktemp "${TMPDIR:-/tmp}/relais-join.XXXXXX.js")
+  trap 'rm -f "$tmpjs"' EXIT
   sed -n '/<script>/,/<\/script>/p' internal/server/web/join.html | sed '1d;$d' > "$tmpjs"
   node --check "$tmpjs"
   rm -f "$tmpjs"
+  trap - EXIT
 fi
 echo "✅ 地板全绿"

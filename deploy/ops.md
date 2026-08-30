@@ -31,3 +31,4 @@
 - 进阶：`relais bridge --hook '<命令>'` 在每条新消息落盘后执行你的命令（环境变量
   RELAIS_MSG_PATH / RELAIS_MSG_DIR / RELAIS_MSG_FROM / RELAIS_MSG_SUMMARY / RELAIS_MSG_ID）。
   例如接一段自己的脚本去唤起本地 AI —— 工具本身不预置任何 AI 调用。
+  ⚠️ Windows：不要在 --hook 命令行里直接写 %RELAIS_MSG_*%（cmd 会在解析前展开，恶意摘要可能注入命令）；请在脚本内部读取环境变量。Unix 的 $VAR 在运行时展开、不会被二次解析，是安全的。

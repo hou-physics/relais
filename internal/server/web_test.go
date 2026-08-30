@@ -3,6 +3,7 @@ package server
 import (
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -47,5 +48,26 @@ func TestStaticPages(t *testing.T) {
 	resp, _ = http.Get(ts.URL + "/vendor/marked.min.js")
 	if resp.StatusCode != 200 {
 		t.Fatalf("vendor 资源应可达: %d", resp.StatusCode)
+	}
+}
+
+// TestAITemplateStaysInSyncAcrossFiles 钉住 app.js 和 join.html 里各自内嵌的
+// "AI 生成消息" 格式模板，防止两份重复拷贝悄悄跑偏（发消息主页 vs. 邀请加入页
+// 各自维护一份同样的模板文本）。
+func TestAITemplateStaysInSyncAcrossFiles(t *testing.T) {
+	const marker = "summary: <一两句话的摘要，给人快速浏览用>"
+	appJS, err := os.ReadFile("web/app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	joinHTML, err := os.ReadFile("web/join.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(appJS), marker) {
+		t.Fatalf("web/app.js 缺少 AI 模板标记行: %q", marker)
+	}
+	if !strings.Contains(string(joinHTML), marker) {
+		t.Fatalf("web/join.html 缺少 AI 模板标记行: %q", marker)
 	}
 }

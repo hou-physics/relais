@@ -7,7 +7,7 @@ import (
 	"github.com/hou-physics/relais/internal/cli"
 )
 
-const version = "0.1.0-m1"
+const version = "0.2.0-m2m3"
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {

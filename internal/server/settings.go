@@ -53,6 +53,14 @@ func (s *Server) handleProfile(w http.ResponseWriter, r *http.Request, p princip
 		writeErr(w, http.StatusBadRequest, "显示名不能为空")
 		return
 	}
+	if len([]rune(req.DisplayName)) > 64 {
+		writeErr(w, http.StatusBadRequest, "显示名过长")
+		return
+	}
+	if len([]rune(req.Avatar)) > 16 {
+		writeErr(w, http.StatusBadRequest, "头像过长")
+		return
+	}
 	if err := s.st.UpdateProfile(p.user.ID, req.DisplayName, req.Avatar); err != nil {
 		writeErr(w, http.StatusInternalServerError, "服务器内部错误")
 		return
