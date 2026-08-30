@@ -39,11 +39,15 @@ func RunInit(args []string) error {
 		[]byte(guide.Text(cfg.Username, channel)), 0o644); err != nil {
 		return err
 	}
+	if err := registerProject(channel, root); err != nil {
+		fmt.Printf("警告：写入项目注册表失败（bridge 将无法自动覆盖本项目）: %v\n", err)
+	}
 	gitignoreNote := ensureGitignore(root)
 	fmt.Printf(`已绑定频道 %q → %s
-  relais/config.toml  绑定配置
-  relais/AGENT.md     agent 使用说明（把它的内容贴进 CLAUDE.md / AGENTS.md，或让 agent 直接读）
-  relais/inbox|sent|drafts/  消息落盘目录
+	  relais/config.toml  绑定配置
+	  relais/AGENT.md     agent 使用说明（把它的内容贴进 CLAUDE.md / AGENTS.md，或让 agent 直接读）
+	  relais/inbox|sent|drafts/  消息落盘目录
+	  已登记到本机项目注册表（relais bridge 会自动照看此项目）
 %s`, channel, cfg.Server, gitignoreNote)
 	return nil
 }

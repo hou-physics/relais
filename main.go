@@ -48,6 +48,8 @@ func run(args []string) error {
 		return cli.RunChannel(args[1:])
 	case "invite":
 		return cli.RunInvite(args[1:])
+	case "bridge":
+		return cli.RunBridge(args[1:])
 	default:
 		return fmt.Errorf("未知子命令 %q", args[0])
 	}

@@ -58,6 +58,62 @@ type ProjectConfig struct {
 	Channel string `toml:"channel"`
 }
 
+type ProjectBinding struct {
+	Channel string `toml:"channel"`
+	Dir     string `toml:"dir"`
+}
+
+type ProjectRegistry struct {
+	Projects []ProjectBinding `toml:"projects"`
+}
+
+func registerProject(channel, dir string) error {
+	registryDir, err := configDir()
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(registryDir, 0o700); err != nil {
+		return err
+	}
+	path := filepath.Join(registryDir, "projects.toml")
+	ps, _ := loadProjects() // 已有记录
+	// upsert：同 channel 覆盖 dir
+	found := false
+	for i, p := range ps {
+		if p.Channel == channel {
+			ps[i].Dir = dir
+			found = true
+			break
+		}
+	}
+	if !found {
+		ps = append(ps, ProjectBinding{Channel: channel, Dir: dir})
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	return toml.NewEncoder(f).Encode(ProjectRegistry{Projects: ps})
+}
+
+func loadProjects() ([]ProjectBinding, error) {
+	registryDir, err := configDir()
+	if err != nil {
+		return nil, err
+	}
+	path := filepath.Join(registryDir, "projects.toml")
+	var reg ProjectRegistry
+	if _, err := toml.DecodeFile(path, &reg); err != nil {
+		// 文件不存在 → 空表，不报错
+		if os.IsNotExist(err) {
+			return []ProjectBinding{}, nil
+		}
+		return nil, err
+	}
+	return reg.Projects, nil
+}
+
 func findProject() (string, *ProjectConfig, error) {
 	dir, err := os.Getwd()
 	if err != nil {

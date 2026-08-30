@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strconv"
 
+	"github.com/hou-physics/relais/internal/api"
 	"github.com/hou-physics/relais/internal/msg"
 )
 
@@ -32,6 +33,25 @@ func RunInbox(_ []string) error {
 			i+1, m.From, m.CreatedAt.Local().Format("2006-01-02 15:04"), m.Summary, m.ID)
 	}
 	return nil
+}
+
+func pullOne(c *Client, root string, envMsg api.Message) (string, error) {
+	full, err := c.Message(envMsg.ID)
+	if err != nil {
+		return "", fmt.Errorf("拉取 %s 失败: %w", envMsg.ID, err)
+	}
+	env := msg.Envelope{ID: full.ID, Channel: full.Channel, From: full.From, To: full.To,
+		InReplyTo: full.InReplyTo, Sent: full.CreatedAt, Summary: full.Summary}
+	// 使用完整 ULID 而非前 10 字符以避免碰撞
+	filename := fmt.Sprintf("%s-%s-%s.md", full.CreatedAt.UTC().Format("20060102"), full.From, full.ID)
+	path := filepath.Join(root, "relais", "inbox", filename)
+	if err := os.WriteFile(path, msg.Render(env, full.Body), 0o644); err != nil {
+		return "", err
+	}
+	if err := c.MarkRead(full.ID); err != nil {
+		return "", err
+	}
+	return path, nil
 }
 
 func RunPull(args []string) error {
@@ -62,22 +82,11 @@ func RunPull(args []string) error {
 		return fmt.Errorf("用法: relais pull [编号]")
 	}
 	for _, envMsg := range targets {
-		full, err := c.Message(envMsg.ID)
+		path, err := pullOne(c, root, envMsg)
 		if err != nil {
-			return fmt.Errorf("拉取 %s 失败: %w", envMsg.ID, err)
-		}
-		env := msg.Envelope{ID: full.ID, Channel: full.Channel, From: full.From, To: full.To,
-			InReplyTo: full.InReplyTo, Sent: full.CreatedAt, Summary: full.Summary}
-		// 使用完整 ULID 而非前 10 字符以避免碰撞
-		filename := fmt.Sprintf("%s-%s-%s.md", full.CreatedAt.UTC().Format("20060102"), full.From, full.ID)
-		path := filepath.Join(root, "relais", "inbox", filename)
-		if err := os.WriteFile(path, msg.Render(env, full.Body), 0o644); err != nil {
 			return err
 		}
-		if err := c.MarkRead(full.ID); err != nil {
-			return err
-		}
-		fmt.Printf("已拉取: %s\n  来自 %s · %s\n", path, full.From, full.Summary)
+		fmt.Printf("已拉取: %s\n  来自 %s · %s\n", path, envMsg.From, envMsg.Summary)
 	}
 	return nil
 }
