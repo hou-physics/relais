@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io/fs"
 	"net/http"
+	"strings"
 
 	"github.com/hou-physics/relais/internal/api"
 	"github.com/hou-physics/relais/internal/store"
@@ -64,6 +65,21 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/channels/{name}/auto/needs-human", s.auth(s.autoNeedsHuman))
 	mux.HandleFunc("POST /api/channels/{name}/guidance", s.auth(s.guidancePost))
 	mux.HandleFunc("GET /api/channels/{name}/guidance", s.auth(s.guidancePull))
+
+	serveScript := func(name, ctype string) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			data, err := webFS.ReadFile("web/" + name)
+			if err != nil {
+				http.NotFound(w, r)
+				return
+			}
+			out := strings.ReplaceAll(string(data), "__BASE_URL__", s.baseURL)
+			w.Header().Set("Content-Type", ctype)
+			w.Write([]byte(out))
+		}
+	}
+	mux.HandleFunc("GET /install.sh", serveScript("install.sh", "text/x-shellscript; charset=utf-8"))
+	mux.HandleFunc("GET /install.ps1", serveScript("install.ps1", "text/plain; charset=utf-8"))
 
 	sub, err := fs.Sub(webFS, "web")
 	if err != nil {

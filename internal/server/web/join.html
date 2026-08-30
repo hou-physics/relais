@@ -22,6 +22,11 @@
   </div>
   <div class="card" id="step2" hidden>
     <h2 data-i18n="step2">第 2 步 · 安装命令行工具（agent 要用它收发消息）</h2>
+    <p>最省事：复制这一行到终端运行，自动装好（含路径配置）。</p>
+    <p><b>Mac / Linux：</b></p>
+    <pre id="inst-unix">curl -fsSL __ORIGIN__/install.sh | sh</pre>
+    <p><b>Windows（PowerShell）：</b></p>
+    <pre id="inst-win">irm __ORIGIN__/install.ps1 | iex</pre>
     <p data-i18n="dlHint">下载后放到任意目录（Windows 无需安装，双击都不用）：</p>
     <div id="downloads"></div>
     <p data-i18n="loginHint">然后打开终端，粘贴运行这一条（含你的专属钥匙，别转发给他人）：</p>
@@ -143,6 +148,11 @@ function applyI18n() {
 const code = location.pathname.split("/").pop();
 const $ = (id) => document.getElementById(id);
 applyI18n();
+// Replace __ORIGIN__ placeholders with actual origin
+for (const id of ["inst-unix", "inst-win"]) {
+  const el = $(id);
+  if (el) el.textContent = el.textContent.replace("__ORIGIN__", location.origin);
+}
 fetch("/api/join/" + code).then(async (r) => {
   if (!r.ok) { $("invite-target").textContent = t("invalid"); $("step1").hidden = true; return; }
   const info = await r.json();
