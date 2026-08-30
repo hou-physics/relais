@@ -44,3 +44,8 @@ main { max-width: 760px; margin: 0 auto; padding: 16px; display: flex; flex-dire
 .steps pre { background: #f0ede6; padding: 10px; border-radius: 8px; overflow-x: auto; white-space: pre-wrap; }
 .dl { display: inline-block; margin: 4px 8px 4px 0; padding: 8px 14px; background: var(--accent);
   color: #fff; border-radius: 8px; text-decoration: none; }
+.import-btn { padding: 8px 14px; border: 1px dashed var(--accent); border-radius: 8px;
+  color: var(--accent); cursor: pointer; font-size: 13px; }
+.import-btn:hover { background: #f7ede8; }
+#composer textarea.dragging { border-color: var(--accent); background: #fbf6f0; }
+#composer button[type=submit]:disabled { opacity: 0.4; cursor: not-allowed; }

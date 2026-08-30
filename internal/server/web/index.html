@@ -30,9 +30,10 @@
       <form id="composer">
         <div id="to-row"></div>
         <input id="summary" placeholder="摘要（给人看的一两句话，必填）" required>
-        <textarea id="body" placeholder="正文 Markdown（给对方 agent 看的完整内容，可留空）"></textarea>
+        <textarea id="body" placeholder="正文 Markdown（给对方 agent 看的完整内容，可留空；可直接把 .md 文件拖进这里）"></textarea>
         <div class="row">
           <button type="submit">发送</button>
+          <label class="import-btn">导入 Markdown 文件<input id="md-file" type="file" accept=".md,.markdown,.txt" hidden></label>
           <span id="send-err" class="err"></span>
         </div>
       </form>

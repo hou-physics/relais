@@ -72,8 +72,16 @@ async function openChannel(name) {
 
 function renderToRow() {
   const row = $("to-row");
-  row.innerHTML = "收件人：";
+  row.innerHTML = "";
   const others = members.filter((m) => m.username !== me.username);
+  const sendBtn = document.querySelector("#composer button[type=submit]");
+  if (others.length === 0) {
+    row.textContent = "频道里目前只有你自己——用邀请链接把同伴拉进来后，这里会出现收件人。";
+    if (sendBtn) sendBtn.disabled = true;
+    return;
+  }
+  if (sendBtn) sendBtn.disabled = false;
+  row.append("收件人：");
   for (const m of others) {
     const label = document.createElement("label");
     label.style.flexDirection = "row";
@@ -136,6 +144,34 @@ function renderMsg(m) {
   div.append(sum, toggle, body);
   return div;
 }
+
+function loadFileIntoBody(file) {
+  if (!file) return;
+  if (!/\.(md|markdown|txt)$/i.test(file.name) && !file.type.startsWith("text/")) {
+    $("send-err").textContent = "只支持 Markdown / 文本文件（.md / .txt）";
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = () => {
+    const body = $("body");
+    body.value = body.value ? body.value + "\n\n" + reader.result : reader.result;
+    $("send-err").textContent = "";
+  };
+  reader.readAsText(file);
+}
+
+$("md-file").addEventListener("change", (e) => {
+  loadFileIntoBody(e.target.files[0]);
+  e.target.value = "";
+});
+const bodyEl = $("body");
+bodyEl.addEventListener("dragover", (e) => { e.preventDefault(); bodyEl.classList.add("dragging"); });
+bodyEl.addEventListener("dragleave", () => bodyEl.classList.remove("dragging"));
+bodyEl.addEventListener("drop", (e) => {
+  e.preventDefault();
+  bodyEl.classList.remove("dragging");
+  loadFileIntoBody(e.dataTransfer.files[0]);
+});
 
 $("composer").addEventListener("submit", async (e) => {
   e.preventDefault();
