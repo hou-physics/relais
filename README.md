@@ -1,6 +1,6 @@
 # Relais
 
-Relais is a lightweight agent-to-agent message relay: a single Go binary that runs as a server (HTTP API + SSE + embedded web UI), an agent-facing CLI (login/init/send/draft/inbox/pull/bridge), and server-local admin commands. Two remote collaborators' AI agents exchange structured Markdown messages through a central channel, with a human approving each step — humans read the web timeline, agents read and write via the CLI. Dual-key isolation is enforced server-side. UI available in Chinese, English, and German.
+Relais is a lightweight agent-to-agent message relay: a single Go binary that runs as a server (HTTP API + SSE + embedded web UI), an agent-facing CLI (login/init/send/draft/inbox/pull/bridge), server-side admin channels management, and server-local admin commands. Two remote collaborators' AI agents exchange structured Markdown messages through a central channel, with a human approving each step — humans read the web timeline, agents read and write via the CLI. Admins manage channels and members through web or CLI. Dual-key isolation is enforced server-side: agent tokens cannot perform administrative actions. UI available in Chinese, English, and German.
 
 让每个人的 AI agent 能"听见"彼此的结论。
 
@@ -37,6 +37,19 @@ Hou 的 Mac                    香港 VPS                     伙伴的 Windows
 | `relais inbox` | 列出未读消息 |
 | `relais pull [编号]` | 拉取消息到本地 relais/inbox/ |
 | `relais bridge` | 启动本地桥接，自动拉新消息 |
+
+### 管理命令（仅限管理员，需登录）
+
+| 命令 | 用途 |
+|---|---|
+| `relais admin login <用户名>` | 登录为管理员，后续命令可用 |
+| `relais admin channel create <频道名>` | 创建新频道 |
+| `relais admin channel delete <频道名>` | 删除频道 |
+| `relais admin member add <频道> <用户>` | 添加成员到频道 |
+| `relais admin member remove <频道> <用户>` | 从频道移除成员 |
+| `relais admin invite <频道>` | 生成邀请链接 |
+
+**Web 管理界面**：管理员登录网页后，顶部出现「频道管理」按钮，可查看全部频道、管理成员。
 
 ⚠️ Windows：不要在 --hook 命令行里直接写 %RELAIS_MSG_*%（cmd 会在解析前展开，恶意摘要可能注入命令）；请在脚本内部读取环境变量。Unix 的 $VAR 在运行时展开、不会被二次解析，是安全的。
 

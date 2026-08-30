@@ -3,6 +3,8 @@
 package e2e
 
 import (
+	"bytes"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -168,5 +170,50 @@ func TestAnchorM2Flows(t *testing.T) {
 	respNew, _ := http.DefaultClient.Do(reqNew)
 	if respNew.StatusCode != 200 {
 		t.Fatalf("锚点8 新 token 应 200, got %d", respNew.StatusCode)
+	}
+}
+
+func TestAnchorAdminInvariant(t *testing.T) {
+	w := newWorld(t)
+	// hou 设管理员
+	if err := w.st.SetAdmin(w.users["hou"].ID, true); err != nil {
+		t.Fatal(err)
+	}
+	adminGet := func(auth func(*http.Request)) int {
+		req, _ := http.NewRequest("GET", w.ts.URL+"/api/admin/channels", nil)
+		auth(req)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return resp.StatusCode
+	}
+	// 锚点 A：管理员的 agent token → 403（安全核心）
+	if code := adminGet(func(r *http.Request) { r.Header.Set("Authorization", "Bearer "+w.users["hou"].AgentToken) }); code != 403 {
+		t.Fatalf("锚点A 管理员 agent token 必须 403, got %d", code)
+	}
+	// 锚点 B：管理员人钥匙（登录拿 cookie）→ 200
+	body, _ := json.Marshal(map[string]string{"username": "hou", "password": "pw-hou"})
+	lr, _ := http.Post(w.ts.URL+"/api/login", "application/json", bytes.NewReader(body))
+	var cookie *http.Cookie
+	for _, c := range lr.Cookies() {
+		if c.Name == "relais_session" {
+			cookie = c
+		}
+	}
+	if code := adminGet(func(r *http.Request) { r.AddCookie(cookie) }); code != 200 {
+		t.Fatalf("锚点B 管理员人钥匙应 200, got %d", code)
+	}
+	// 锚点 C：非管理员(wu)人钥匙 → 403
+	body2, _ := json.Marshal(map[string]string{"username": "wu", "password": "pw-wu"})
+	lr2, _ := http.Post(w.ts.URL+"/api/login", "application/json", bytes.NewReader(body2))
+	var cookie2 *http.Cookie
+	for _, c := range lr2.Cookies() {
+		if c.Name == "relais_session" {
+			cookie2 = c
+		}
+	}
+	if code := adminGet(func(r *http.Request) { r.AddCookie(cookie2) }); code != 403 {
+		t.Fatalf("锚点C 非管理员应 403, got %d", code)
 	}
 }

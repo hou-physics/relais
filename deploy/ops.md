@@ -17,6 +17,29 @@
    `sudo crontab -e` 加 `20 4 * * * /usr/local/bin/relais-backup.sh`。
 9. 验证实时性：两个浏览器分别登录两个账号互发一条消息，确认秒级出现（SSE 经 Caddy 正常）。
 
+## 管理员
+
+种子授权（部署后跑一次，给首个管理员设权）：
+```bash
+sudo relais admin grant hou_physics --config /etc/relais/server.toml
+```
+
+**Web 网页管理**：管理员登录后，网页顶部出现「频道管理」按钮，可查看全部频道、添加/移除成员。
+
+**CLI 后台命令**（需装在服务器或运维机上，`/etc/relais/server.toml` 可访问）：
+```bash
+relais admin login <用户名> --config /etc/relais/server.toml    # 登录
+relais admin channel list                                       # 列频道
+relais admin channel create <名>                                # 创频道
+relais admin channel delete <名>                                # 删频道
+relais admin member add <频道> <用户>                           # 添成员
+relais admin member remove <频道> <用户>                        # 移成员
+relais admin grant <用户> --config /etc/relais/server.toml      # 授管理权
+relais admin revoke <用户> --config /etc/relais/server.toml     # 撤管理权
+```
+
+**安全核心**：agent token（CLI 本地发消息用）**无任何管理权** —— 管理功能必须通过人工登录（web cookie 或 admin login session）。这是设计锁定，即使 agent token 泄露也无法操纵频道。
+
 ## 日常
 - 升级：本机 `deploy/deploy.sh ship user@server`（自动重启，秒级中断）。
 - 看日志：`journalctl -u relais -f`。
