@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS users (
   password_hash TEXT NOT NULL,
   agent_token TEXT NOT NULL UNIQUE,
   avatar TEXT NOT NULL DEFAULT '',
+  is_admin INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS channels (
@@ -106,6 +107,10 @@ func Open(path string) (*Store, error) {
 		!strings.Contains(err.Error(), "duplicate column") {
 		return nil, err
 	}
+	if _, err := db.Exec(`ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0`); err != nil &&
+		!strings.Contains(err.Error(), "duplicate column") {
+		return nil, err
+	}
 	return &Store{db: db}, nil
 }
 
@@ -127,6 +132,7 @@ type User struct {
 	DisplayName string
 	AgentToken  string
 	Avatar      string
+	IsAdmin     bool
 }
 
 func (s *Store) CreateUser(username, displayName, password string) (*User, error) {
@@ -151,17 +157,19 @@ func (s *Store) CreateUser(username, displayName, password string) (*User, error
 func (s *Store) scanUser(row *sql.Row) (*User, string, error) {
 	var u User
 	var hash string
-	err := row.Scan(&u.ID, &u.Username, &u.DisplayName, &hash, &u.AgentToken, &u.Avatar)
+	var adminInt int
+	err := row.Scan(&u.ID, &u.Username, &u.DisplayName, &hash, &u.AgentToken, &u.Avatar, &adminInt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, "", ErrNotFound
 	}
 	if err != nil {
 		return nil, "", err
 	}
+	u.IsAdmin = adminInt == 1
 	return &u, hash, nil
 }
 
-const userCols = `id, username, display_name, password_hash, agent_token, avatar`
+const userCols = `id, username, display_name, password_hash, agent_token, avatar, is_admin`
 
 func (s *Store) UserByName(username string) (*User, error) {
 	u, _, err := s.scanUser(s.db.QueryRow(`SELECT `+userCols+` FROM users WHERE username=?`, username))
@@ -665,4 +673,51 @@ func (s *Store) UpdateProfile(userID int64, displayName, avatar string) error {
 func (s *Store) DeleteSession(token string) error {
 	_, err := s.db.Exec(`DELETE FROM sessions WHERE token=?`, token)
 	return err
+}
+
+func (s *Store) SetAdmin(userID int64, admin bool) error {
+	v := 0
+	if admin {
+		v = 1
+	}
+	_, err := s.db.Exec(`UPDATE users SET is_admin=? WHERE id=?`, v, userID)
+	return err
+}
+
+type ChannelStat struct {
+	Name    string
+	Members int
+}
+
+func (s *Store) AllChannels() ([]ChannelStat, error) {
+	rows, err := s.db.Query(`SELECT c.name, (SELECT COUNT(*) FROM members m WHERE m.channel_id=c.id)
+		FROM channels c ORDER BY c.name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ChannelStat
+	for rows.Next() {
+		var st ChannelStat
+		if err := rows.Scan(&st.Name, &st.Members); err != nil {
+			return nil, err
+		}
+		out = append(out, st)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) RemoveMember(channelID, userID int64) error {
+	res, err := s.db.Exec(`DELETE FROM members WHERE channel_id=? AND user_id=?`, channelID, userID)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
 }

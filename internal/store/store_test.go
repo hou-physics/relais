@@ -365,3 +365,65 @@ func TestMessageCarriesSenderAvatar(t *testing.T) {
 	}
 	_ = m
 }
+
+func TestAdminFlagMigrationAndSet(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "a.db")
+	s1, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	u, _ := s1.CreateUser("hou", "Hou", "pw123456")
+	if u.IsAdmin {
+		t.Fatal("新用户默认非管理员")
+	}
+	s1.Close()
+	s2, err := Open(path) // 重复 Open 迁移幂等
+	if err != nil {
+		t.Fatalf("重复 Open 应幂等: %v", err)
+	}
+	defer s2.Close()
+	if err := s2.SetAdmin(u.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := s2.UserByName("hou")
+	if !got.IsAdmin {
+		t.Fatal("SetAdmin 后应为管理员")
+	}
+	// agent token / session 查出的 User 也带 IsAdmin
+	byTok, _ := s2.UserByAgentToken(u.AgentToken)
+	if !byTok.IsAdmin {
+		t.Fatal("按 token 查出的 User 应带 IsAdmin")
+	}
+}
+
+func TestAllChannelsAndRemoveMember(t *testing.T) {
+	s := testStore(t)
+	a, _ := s.CreateUser("hou", "Hou", "pw")
+	b, _ := s.CreateUser("wu", "Wu", "pw")
+	c1, _ := s.CreateChannel("alpha")
+	c2, _ := s.CreateChannel("beta")
+	s.AddMember(c1.ID, a.ID)
+	s.AddMember(c1.ID, b.ID)
+	s.AddMember(c2.ID, a.ID)
+	stats, err := s.AllChannels()
+	if err != nil || len(stats) != 2 {
+		t.Fatalf("应 2 个频道: %+v %v", stats, err)
+	}
+	m := map[string]int{}
+	for _, st := range stats {
+		m[st.Name] = st.Members
+	}
+	if m["alpha"] != 2 || m["beta"] != 1 {
+		t.Fatalf("成员数不对: %+v", m)
+	}
+	if err := s.RemoveMember(c1.ID, b.ID); err != nil {
+		t.Fatal(err)
+	}
+	ok, _ := s.IsMember(c1.ID, b.ID)
+	if ok {
+		t.Fatal("移除后不应是成员")
+	}
+	if err := s.RemoveMember(c1.ID, b.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("移除不存在的成员应 ErrNotFound, got %v", err)
+	}
+}
