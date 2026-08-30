@@ -23,6 +23,17 @@ func TestStaticPages(t *testing.T) {
 			t.Fatalf("首页缺少 %q", want)
 		}
 	}
+	if !strings.Contains(string(body), "data-i18n") {
+		t.Fatal("首页应含 data-i18n")
+	}
+	resp, _ = http.Get(ts.URL + "/app.js")
+	body, _ = io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 || !strings.Contains(string(body), "const I18N") {
+		t.Fatalf("/app.js 应含 const I18N: %d", resp.StatusCode)
+	}
+	if !strings.Contains(string(body), "Deutsch") {
+		t.Fatal("/app.js 应含 Deutsch")
+	}
 	ch, _ := st.ChannelByName("deutschapp")
 	code, _ := st.CreateInvite(ch.ID, users["hou"].ID, time.Hour)
 	resp, _ = http.Get(ts.URL + "/join/" + code)

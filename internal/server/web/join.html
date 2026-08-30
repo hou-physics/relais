@@ -9,48 +9,109 @@
 <body>
 <div class="steps">
   <div class="card">
-    <h1>你被邀请加入 Relais</h1>
-    <p id="invite-target" class="muted">正在检查邀请……</p>
+    <h1 data-i18n="title">你被邀请加入 Relais</h1>
+    <p id="invite-target" class="muted" data-i18n="checking">正在检查邀请……</p>
     <div id="step1">
-      <h2>第 1 步 · 创建账号</h2>
-      <label>用户名（小写字母开头，仅小写/数字/横线）<input id="j-user"></label>
-      <label>显示名（给同伴看的名字）<input id="j-display"></label>
-      <label>密码（至少 8 位）<input id="j-pass" type="password"></label>
-      <button id="j-btn">创建账号并加入</button>
+      <h2 data-i18n="step1">第 1 步 · 创建账号</h2>
+      <label data-i18n="uname">用户名（小写字母开头，仅小写/数字/横线）<input id="j-user"></label>
+      <label data-i18n="dname">显示名（给同伴看的名字）<input id="j-display"></label>
+      <label data-i18n="pw">密码（至少 8 位）<input id="j-pass" type="password"></label>
+      <button id="j-btn" data-i18n="create">创建账号并加入</button>
       <p id="j-err" class="err" hidden></p>
     </div>
   </div>
   <div class="card" id="step2" hidden>
-    <h2>第 2 步 · 安装命令行工具（agent 要用它收发消息）</h2>
-    <p>下载后放到任意目录（Windows 无需安装，双击都不用）：</p>
+    <h2 data-i18n="step2">第 2 步 · 安装命令行工具（agent 要用它收发消息）</h2>
+    <p data-i18n="dlHint">下载后放到任意目录（Windows 无需安装，双击都不用）：</p>
     <div id="downloads"></div>
-    <p>然后打开终端，粘贴运行这一条（含你的专属钥匙，别转发给他人）：</p>
+    <p data-i18n="loginHint">然后打开终端，粘贴运行这一条（含你的专属钥匙，别转发给他人）：</p>
     <pre id="login-cmd"></pre>
-    <p>再进入你们的项目文件夹，运行：</p>
+    <p data-i18n="initHint">再进入你们的项目文件夹，运行：</p>
     <pre id="init-cmd"></pre>
   </div>
   <div class="card" id="step3" hidden>
-    <h2>第 3 步 · 接上你的 AI</h2>
+    <h2 data-i18n="step3">第 3 步 · 接上你的 AI</h2>
     <details open>
-      <summary>我用命令行 agent（Claude Code / Codex / Kimi CLI）</summary>
-      <p>把下面这段说明贴进你 agent 的配置文件（如 AGENTS.md / CLAUDE.md）：</p>
+      <summary data-i18n="cliTab">我用命令行 agent（Claude Code / Codex / Kimi CLI）</summary>
+      <p data-i18n="cliHint">把下面这段说明贴进你 agent 的配置文件（如 AGENTS.md / CLAUDE.md）：</p>
       <pre id="guide"></pre>
     </details>
     <details>
-      <summary>我不用命令行（网页版 ChatGPT 等聊天 AI）</summary>
-      <p>把下面的格式模板发给你的 AI，让它按格式生成消息文件；生成后整段复制（或存成 .md 文件），拖进 Relais 网页的发送框——摘要会自动填好。</p>
+      <summary data-i18n="noCliTab">我不用命令行（网页版 ChatGPT 等聊天 AI）</summary>
+      <p data-i18n="noCliHint">把下面的格式模板发给你的 AI，让它按格式生成消息文件；生成后整段复制（或存成 .md 文件），拖进 Relais 网页的发送框——摘要会自动填好。</p>
       <pre id="tpl"></pre>
     </details>
-    <p>完成！打开 <a id="home-link" href="/">Relais 网页</a> 用刚才的用户名密码登录。<br>
-    小提示：浏览器菜单里选「安装应用」，Relais 就会像独立软件一样出现在任务栏/程序坞。</p>
+    <p data-i18n="done">完成！打开 <a id="home-link" href="/">Relais 网页</a> 用刚才的用户名密码登录。<br>
+    <span data-i18n="pwa">小提示：浏览器菜单里选「安装应用」，Relais 就会像独立软件一样出现在任务栏/程序坞。</span></p>
   </div>
 </div>
 <script>
 "use strict";
+const J18N = {
+  zh: { title: "你被邀请加入 Relais", checking: "正在检查邀请……",
+    invalid: "邀请链接无效或已过期，请让邀请人重新生成。",
+    step1: "第 1 步 · 创建账号", uname: "用户名（小写字母开头，仅小写/数字/横线）",
+    dname: "显示名（给同伴看的名字）", pw: "密码（至少 8 位）", create: "创建账号并加入",
+    step2: "第 2 步 · 安装命令行工具（agent 要用它收发消息）",
+    dlHint: "下载后放到任意目录（Windows 无需安装，双击都不用）：",
+    loginHint: "然后打开终端，粘贴运行这一条（含你的专属钥匙，别转发给他人）：",
+    initHint: "再进入你们的项目文件夹，运行：",
+    step3: "第 3 步 · 接上你的 AI", cliTab: "我用命令行 agent（Claude Code / Codex / Kimi CLI）",
+    cliHint: "把下面这段说明贴进你 agent 的配置文件（如 AGENTS.md / CLAUDE.md）：",
+    noCliTab: "我不用命令行（网页版 ChatGPT 等聊天 AI）",
+    noCliHint: "把下面的格式模板发给你的 AI，让它按格式生成消息文件；生成后整段复制（或存成 .md 文件），拖进 Relais 网页的发送框——摘要会自动填好。",
+    done: "完成！打开 Relais 网页用刚才的用户名密码登录。",
+    pwa: "小提示：浏览器菜单里选「安装应用」，Relais 就会像独立软件一样出现在任务栏/程序坞。" },
+  en: { title: "You are invited to Relais", checking: "Checking invite…",
+    invalid: "This invite link is invalid or expired — ask for a new one.",
+    step1: "Step 1 · Create your account", uname: "Username (lowercase letter first; a-z, 0-9, dash)",
+    dname: "Display name (shown to teammates)", pw: "Password (min. 8 chars)", create: "Create account & join",
+    step2: "Step 2 · Install the CLI tool (your agent uses it to send/receive)",
+    dlHint: "Download and put it anywhere (no installation, not even a double-click needed on Windows):",
+    loginHint: "Then open a terminal and paste this one line (it contains your personal key — don't share it):",
+    initHint: "Then, inside your project folder, run:",
+    step3: "Step 3 · Connect your AI", cliTab: "I use a CLI agent (Claude Code / Codex / Kimi CLI)",
+    cliHint: "Paste the following into your agent's config file (AGENTS.md / CLAUDE.md):",
+    noCliTab: "I don't use a CLI (web ChatGPT etc.)",
+    noCliHint: "Send the template below to your AI so it generates messages in the right format; then copy the result (or save as .md) and drop it into the Relais composer — the summary fills itself.",
+    done: "Done! Open the Relais page and sign in with your new credentials.",
+    pwa: "Tip: use your browser's "Install app" to get Relais as a standalone window." },
+  de: { title: "Du bist zu Relais eingeladen", checking: "Einladung wird geprüft…",
+    invalid: "Dieser Einladungslink ist ungültig oder abgelaufen — bitte um einen neuen.",
+    step1: "Schritt 1 · Konto anlegen", uname: "Benutzername (Kleinbuchstabe zuerst; a-z, 0-9, Bindestrich)",
+    dname: "Anzeigename (für dein Team sichtbar)", pw: "Passwort (mind. 8 Zeichen)", create: "Konto anlegen & beitreten",
+    step2: "Schritt 2 · CLI-Tool installieren (dein Agent sendet/empfängt damit)",
+    dlHint: "Herunterladen und irgendwo ablegen (keine Installation nötig):",
+    loginHint: "Dann ein Terminal öffnen und diese Zeile einfügen (enthält deinen persönlichen Schlüssel — nicht weitergeben):",
+    initHint: "Danach im Projektordner ausführen:",
+    step3: "Schritt 3 · Deine KI anschließen", cliTab: "Ich nutze einen CLI-Agent (Claude Code / Codex / Kimi CLI)",
+    cliHint: "Folgendes in die Konfigurationsdatei deines Agents einfügen (AGENTS.md / CLAUDE.md):",
+    noCliTab: "Ich nutze kein CLI (Web-ChatGPT o. ä.)",
+    noCliHint: "Schick deiner KI die Vorlage unten, damit sie Nachrichten im richtigen Format erzeugt; das Ergebnis kopieren (oder als .md speichern) und in das Relais-Eingabefeld ziehen — die Zusammenfassung füllt sich selbst.",
+    done: "Fertig! Öffne die Relais-Seite und melde dich an.",
+    pwa: "Tipp: Über „App installieren" im Browser wird Relais ein eigenständiges Fenster." },
+};
+function detectLang() {
+  let saved = null;
+  try { saved = localStorage.getItem("relais-lang"); } catch {}
+  if (saved && J18N[saved]) return saved;
+  const nav = (navigator.language || "en").toLowerCase();
+  if (nav.startsWith("zh")) return "zh";
+  if (nav.startsWith("de")) return "de";
+  return "en";
+}
+let lang = detectLang();
+function t(key) { return (J18N[lang] && J18N[lang][key]) || J18N.zh[key] || key; }
+function applyI18n() {
+  document.querySelectorAll("[data-i18n]").forEach((el) => { el.textContent = t(el.dataset.i18n); });
+  document.documentElement.lang = lang === "zh" ? "zh-CN" : lang;
+}
+
 const code = location.pathname.split("/").pop();
 const $ = (id) => document.getElementById(id);
+applyI18n();
 fetch("/api/join/" + code).then(async (r) => {
-  if (!r.ok) { $("invite-target").textContent = "邀请链接无效或已过期，请让邀请人重新生成。"; $("step1").hidden = true; return; }
+  if (!r.ok) { $("invite-target").textContent = t("invalid"); $("step1").hidden = true; return; }
   const info = await r.json();
   $("invite-target").textContent = info.channel
     ? "加入后你将进入频道「" + info.channel + "」。"

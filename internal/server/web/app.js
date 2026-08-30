@@ -2,6 +2,72 @@
 const $ = (id) => document.getElementById(id);
 let me = null, channel = null, members = [], sse = null, unreadTotal = 0;
 
+// Supported languages: 中文 (zh), English (en), Deutsch (de)
+const I18N = {
+  zh: {
+    tagline: "agent 之间的信使 · 人在回路", username: "用户名", password: "密码", login: "登录",
+    settings: "个人设置", logout: "退出登录", send: "发送", importFile: "导入 Markdown 文件",
+    copyTpl: "复制 AI 格式模板", summaryPh: "摘要（给人看的一两句话，必填）",
+    bodyPh: "正文 Markdown（给对方 agent 看的完整内容，可留空；可直接把 .md 文件拖进这里）",
+    displayName: "显示名", avatarEmoji: "头像（一个 emoji，留空用首字母）", save: "保存",
+    changePw: "修改密码", oldPw: "旧密码", newPw: "新密码（至少 8 位）",
+    tokenHint: "重置后旧 token 立即失效，需要在电脑上重新运行 relais login。", regenToken: "重置 agent token",
+    notify: "桌面通知", notifyHint: "页面在后台时，新消息弹系统通知。", notifyEnable: "启用桌面通知",
+    notifyOn: "已启用 ✓", notifyDenied: "浏览器已拒绝（请在浏览器设置里允许）", backChat: "← 返回聊天",
+    expand: "展开正文 ▾", collapse: "收起 ▴", copyRaw: "复制原文", feedAI: "复制给 AI 的指令",
+    markRead: "标记已读", copied: "已复制 ✓", draft: "草稿", del: "删除",
+    soloHint: "频道里目前只有你自己——用邀请链接把同伴拉进来后，这里会出现收件人。",
+    recipients: "收件人：", noBody: "（无正文）", unreadPrefix: "未读",
+  },
+  en: {
+    tagline: "Messenger between agents · human in the loop", username: "Username", password: "Password", login: "Sign in",
+    settings: "Settings", logout: "Sign out", send: "Send", importFile: "Import Markdown file",
+    copyTpl: "Copy AI template", summaryPh: "Summary (one or two sentences for humans, required)",
+    bodyPh: "Markdown body (full content for the other agent; optional; drag a .md file here)",
+    displayName: "Display name", avatarEmoji: "Avatar (one emoji; empty = initial)", save: "Save",
+    changePw: "Change password", oldPw: "Old password", newPw: "New password (min. 8 chars)",
+    tokenHint: "Resetting invalidates the old token immediately; run relais login again on your computer.", regenToken: "Reset agent token",
+    notify: "Desktop notifications", notifyHint: "Get a system notification for new messages while the tab is in background.", notifyEnable: "Enable notifications",
+    notifyOn: "Enabled ✓", notifyDenied: "Blocked by browser (allow it in browser settings)", backChat: "← Back to chat",
+    expand: "Show body ▾", collapse: "Hide ▴", copyRaw: "Copy raw", feedAI: "Copy AI instruction",
+    markRead: "Mark read", copied: "Copied ✓", draft: "DRAFT", del: "Delete",
+    soloHint: "You are the only member so far — invite your partner and recipients will appear here.",
+    recipients: "To: ", noBody: "(no body)", unreadPrefix: "Unread",
+  },
+  de: {
+    tagline: "Bote zwischen Agents · Mensch in der Schleife", username: "Benutzername", password: "Passwort", login: "Anmelden",
+    settings: "Einstellungen", logout: "Abmelden", send: "Senden", importFile: "Markdown-Datei importieren",
+    copyTpl: "KI-Vorlage kopieren", summaryPh: "Zusammenfassung (ein bis zwei Sätze für Menschen, Pflicht)",
+    bodyPh: "Markdown-Inhalt (vollständiger Text für den anderen Agent; optional; .md-Datei hierher ziehen)",
+    displayName: "Anzeigename", avatarEmoji: "Avatar (ein Emoji; leer = Initiale)", save: "Speichern",
+    changePw: "Passwort ändern", oldPw: "Altes Passwort", newPw: "Neues Passwort (mind. 8 Zeichen)",
+    tokenHint: "Nach dem Zurücksetzen ist der alte Token sofort ungültig; führe relais login erneut aus.", regenToken: "Agent-Token zurücksetzen",
+    notify: "Desktop-Benachrichtigungen", notifyHint: "Systembenachrichtigung bei neuen Nachrichten, wenn der Tab im Hintergrund ist.", notifyEnable: "Benachrichtigungen aktivieren",
+    notifyOn: "Aktiviert ✓", notifyDenied: "Vom Browser blockiert (in den Browsereinstellungen erlauben)", backChat: "← Zurück zum Chat",
+    expand: "Inhalt zeigen ▾", collapse: "Einklappen ▴", copyRaw: "Rohtext kopieren", feedAI: "KI-Anweisung kopieren",
+    markRead: "Als gelesen markieren", copied: "Kopiert ✓", draft: "ENTWURF", del: "Löschen",
+    soloHint: "Du bist bisher das einzige Mitglied — lade deine Partnerin ein, dann erscheinen hier Empfänger.",
+    recipients: "An: ", noBody: "(kein Inhalt)", unreadPrefix: "Ungelesen",
+  },
+};
+function detectLang() {
+  let saved = null;
+  try { saved = localStorage.getItem("relais-lang"); } catch {}
+  if (saved && I18N[saved]) return saved;
+  const nav = (navigator.language || "en").toLowerCase();
+  if (nav.startsWith("zh")) return "zh";
+  if (nav.startsWith("de")) return "de";
+  return "en";
+}
+let lang = detectLang();
+function t(key) { return (I18N[lang] && I18N[lang][key]) || I18N.zh[key] || key; }
+window.__t = t;
+function applyI18n() {
+  document.querySelectorAll("[data-i18n]").forEach((el) => { el.textContent = t(el.dataset.i18n); });
+  document.querySelectorAll("[data-i18n-placeholder]").forEach((el) => { el.placeholder = t(el.dataset.i18nPlaceholder); });
+  document.documentElement.lang = lang === "zh" ? "zh-CN" : lang;
+}
+
 async function api(path, opts = {}) {
   const resp = await fetch(path, { headers: { "Content-Type": "application/json" }, ...opts });
   if (!resp.ok) {
@@ -51,13 +117,14 @@ async function copyText(btn, text) {
   try {
     await navigator.clipboard.writeText(text);
     const old = btn.textContent;
-    btn.textContent = "已复制 ✓";
+    btn.textContent = t("copied");
     setTimeout(() => { btn.textContent = old; }, 1500);
   } catch {
     $("send-err").textContent = "复制失败：请检查浏览器剪贴板权限";
   }
 }
 
+// 模板语言固定为中文（消息约定与 AI 交互的格式统一，不随 UI 语言变化）
 function aiTemplate() {
   return [
     "请把我接下来提供的内容，整理成一个用于 Relais 的 Markdown 消息文件。格式要求：",
@@ -75,7 +142,16 @@ function aiInstruction(m) {
   return "请运行 relais pull 拉取消息 " + m.id + "，阅读 relais/inbox/ 下对应文件，与我讨论后用 relais draft 起草回复（不要直接 send）。";
 }
 
+$("lang-select").addEventListener("change", () => {
+  lang = $("lang-select").value;
+  try { localStorage.setItem("relais-lang", lang); } catch {}
+  applyI18n();
+  if (channel) { renderToRow(); refresh(); loadDrafts(); }
+});
+
 async function boot() {
+  applyI18n();
+  $("lang-select").value = lang;
   try {
     me = await api("/api/me");
     $("login-view").hidden = true;
@@ -89,6 +165,25 @@ async function boot() {
     $("login-view").hidden = false;
     $("main-view").hidden = true;
   }
+}
+
+function updateNotifyBtn() {
+  const btn = $("notify-btn");
+  if (!("Notification" in window)) { btn.disabled = true; return; }
+  if (Notification.permission === "granted") { btn.textContent = t("notifyOn"); btn.disabled = true; }
+  else if (Notification.permission === "denied") { btn.textContent = t("notifyDenied"); btn.disabled = true; }
+}
+$("notify-btn").addEventListener("click", async () => {
+  if (!("Notification" in window)) return;
+  await Notification.requestPermission();
+  updateNotifyBtn();
+});
+function maybeNotify(m) {
+  if (!("Notification" in window) || Notification.permission !== "granted") return;
+  if (!document.hidden) return;
+  if (m.from === me.username) return;
+  const n = new Notification(m.from_display, { body: m.summary });
+  n.onclick = () => { window.focus(); n.close(); };
 }
 
 $("login-btn").addEventListener("click", async () => {
@@ -130,7 +225,7 @@ async function loadDrafts() {
     const card = document.createElement("div");
     card.className = "draft-card";
     const tag = document.createElement("span");
-    tag.className = "draft-tag"; tag.textContent = "草稿";
+    tag.className = "draft-tag"; tag.textContent = t("draft");
     const meta = document.createElement("span");
     meta.className = "muted"; meta.textContent = "→ " + d.to.join(", ");
     const sum = document.createElement("div");
@@ -138,19 +233,27 @@ async function loadDrafts() {
     const body = document.createElement("div");
     body.className = "body"; body.hidden = true;
     const toggle = document.createElement("button");
-    toggle.className = "toggle"; toggle.textContent = "展开正文 ▾";
+    toggle.className = "toggle"; toggle.textContent = t("expand");
     toggle.onclick = () => {
-      if (body.hidden) { body.innerHTML = d.body_md ? md(d.body_md) : "<p class='muted'>（无正文）</p>"; body.hidden = false; toggle.textContent = "收起 ▴"; }
-      else { body.hidden = true; toggle.textContent = "展开正文 ▾"; }
+      if (body.hidden) {
+        if (d.body_md) {
+          body.innerHTML = md(d.body_md);
+        } else {
+          body.textContent = t("noBody");
+        }
+        body.hidden = false;
+        toggle.textContent = t("collapse");
+      }
+      else { body.hidden = true; toggle.textContent = t("expand"); }
     };
     const send = document.createElement("button");
-    send.textContent = "发送";
+    send.textContent = t("send");
     send.onclick = async () => {
       try { await api("/api/drafts/" + d.id + "/send", { method: "POST" }); loadDrafts(); refresh(); }
       catch (e) { $("send-err").textContent = e.message; }
     };
     const del = document.createElement("button");
-    del.className = "ghost"; del.textContent = "删除";
+    del.className = "ghost"; del.textContent = t("del");
     del.onclick = async () => { await api("/api/drafts/" + d.id, { method: "DELETE" }); loadDrafts(); };
     const row = document.createElement("div");
     row.className = "row";
@@ -168,7 +271,10 @@ async function openChannel(name) {
   await refresh();
   if (sse) sse.close();
   sse = new EventSource("/api/events?channel=" + encodeURIComponent(name));
-  sse.onmessage = () => { refresh(); loadChannels(); loadDrafts(); };
+  sse.onmessage = (ev) => {
+    try { maybeNotify(JSON.parse(ev.data)); } catch {}
+    refresh(); loadChannels(); loadDrafts();
+  };
   loadChannels();
 }
 
@@ -178,12 +284,12 @@ function renderToRow() {
   const others = members.filter((m) => m.username !== me.username);
   const sendBtn = document.querySelector("#composer button[type=submit]");
   if (others.length === 0) {
-    row.textContent = "频道里目前只有你自己——用邀请链接把同伴拉进来后，这里会出现收件人。";
+    row.textContent = t("soloHint");
     if (sendBtn) sendBtn.disabled = true;
     return;
   }
   if (sendBtn) sendBtn.disabled = false;
-  row.append("收件人：");
+  row.append(t("recipients"));
   for (const m of others) {
     const label = document.createElement("label");
     label.style.flexDirection = "row";
@@ -236,19 +342,23 @@ function renderMsg(m) {
   const actions = document.createElement("div");
   actions.className = "actions";
   const toggle = document.createElement("button");
-  toggle.className = "toggle"; toggle.textContent = "展开正文 ▾";
+  toggle.className = "toggle"; toggle.textContent = t("expand");
   toggle.onclick = async () => {
     if (body.hidden) {
       if (!body.innerHTML) {
         const full = await api("/api/messages/" + m.id);
-        body.innerHTML = full.body_md ? md(full.body_md) : "<p class='muted'>（无正文）</p>";
+        if (full.body_md) {
+          body.innerHTML = md(full.body_md);
+        } else {
+          body.textContent = t("noBody");
+        }
       }
-      body.hidden = false; toggle.textContent = "收起 ▴";
-    } else { body.hidden = true; toggle.textContent = "展开正文 ▾"; }
+      body.hidden = false; toggle.textContent = t("collapse");
+    } else { body.hidden = true; toggle.textContent = t("expand"); }
   };
   actions.append(toggle);
   const copyRaw = document.createElement("button");
-  copyRaw.className = "toggle"; copyRaw.textContent = "复制原文";
+  copyRaw.className = "toggle"; copyRaw.textContent = t("copyRaw");
   copyRaw.onclick = async () => {
     const full = await api("/api/messages/" + m.id);
     const head = ["---", "id: " + full.id, "channel: " + full.channel, "from: " + full.from,
@@ -258,12 +368,12 @@ function renderMsg(m) {
   actions.append(copyRaw);
   if (m.to.includes(me.username)) {
     const feed = document.createElement("button");
-    feed.className = "toggle"; feed.textContent = "复制给 AI 的指令";
+    feed.className = "toggle"; feed.textContent = t("feedAI");
     feed.onclick = () => copyText(feed, aiInstruction(m));
     actions.append(feed);
     if (m.unread) {
       const markRead = document.createElement("button");
-      markRead.className = "toggle"; markRead.textContent = "标记已读";
+      markRead.className = "toggle"; markRead.textContent = t("markRead");
       markRead.onclick = async () => {
         await api("/api/messages/" + m.id + "/read", { method: "POST" });
         refresh(); loadChannels();
@@ -339,6 +449,7 @@ $("menu-settings").addEventListener("click", () => {
   $("set-display").value = me.display_name;
   $("set-avatar").value = me.avatar || "";
   showView("settings");
+  updateNotifyBtn();
 });
 $("back-chat").addEventListener("click", () => showView("chat"));
 $("menu-logout").addEventListener("click", async () => {
