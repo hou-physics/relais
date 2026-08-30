@@ -129,10 +129,12 @@ func writeHookWindows(info SetupInfo) (string, error) {
 		agentCmd + " > \"%OUT%\"\r\n" +
 		"set \"FIRST=\"\r\n" +
 		"set /p FIRST=<\"%OUT%\"\r\n" +
+		// Q 的计算与去引号放在 if 块外（顶层行）：块内一个未配对的 " 会让 cmd
+		// 把括号块的引号开合状态算错、找不到匹配的 )，破坏整块解析。顶层行则逐行独立解析，安全。
+		"set \"Q=!FIRST:NEEDS_HUMAN: =!\"\r\n" +
+		"set Q=!Q:\"=!\r\n" +
 		"echo(!FIRST!| findstr /b /c:\"NEEDS_HUMAN:\" >nul\r\n" +
 		"if !errorlevel!==0 (\r\n" +
-		"  set \"Q=!FIRST:NEEDS_HUMAN: =!\"\r\n" +
-		"  set Q=!Q:\"=!\r\n" +
 		"  \"" + relais + "\" needs-human \"!Q!\"\r\n" +
 		") else (\r\n" +
 		"  echo(!FIRST!| findstr /b /c:\"---\" >nul\r\n" +

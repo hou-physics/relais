@@ -63,6 +63,13 @@ func TestWindowsHookHasGuardrails(t *testing.T) {
 	if !strings.Contains(h, `set Q=!Q:"=!`) {
 		t.Fatal("windows hook 未剥离 Q 里的双引号（needs-human 参数截断风险）")
 	}
+	// Q 去引号必须在第一个 if !errorlevel!（NEEDS_HUMAN 块）之前，即顶层行。
+	// 放进括号块里的单个未配对 " 会让 cmd 算错块的引号开合、找不到匹配的 )，破坏整块解析。
+	qi := strings.Index(h, `set Q=!Q:"=!`)
+	ifi := strings.Index(h, "if !errorlevel!==0")
+	if qi < 0 || ifi < 0 || qi > ifi {
+		t.Fatal("Q 去引号必须在 NEEDS_HUMAN if 块之前（顶层行），否则块内未配对引号破坏 cmd 括号解析")
+	}
 	// 临时文件用 %RANDOM% 避免并发碰撞
 	if !strings.Contains(h, "relais-reply-%RANDOM%.md") {
 		t.Fatal("windows hook 临时输出文件未加 %RANDOM%（并发碰撞风险）")
