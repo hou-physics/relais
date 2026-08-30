@@ -19,7 +19,7 @@ func main() {
 
 func run(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("用法: relais <serve|login|init|send|draft|inbox|pull|members|agent-guide|user|channel|invite|bridge|admin|version>")
+		return fmt.Errorf("用法: relais <serve|login|init|send|draft|inbox|pull|members|agent-guide|user|channel|invite|bridge|admin|auto|auto-turn|needs-human|guidance-pull|version>")
 	}
 	switch args[0] {
 	case "version":
@@ -53,6 +53,14 @@ func run(args []string) error {
 		return cli.RunBridge(args[1:])
 	case "admin":
 		return cli.RunAdmin(args[1:])
+	case "auto":
+		return cli.RunAuto(args[1:])
+	case "auto-turn":
+		return cli.RunAutoTurn(args[1:])
+	case "needs-human":
+		return cli.RunNeedsHuman(args[1:])
+	case "guidance-pull":
+		return cli.RunGuidancePull(args[1:])
 	default:
 		return fmt.Errorf("未知子命令 %q", args[0])
 	}

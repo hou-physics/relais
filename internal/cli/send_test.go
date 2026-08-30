@@ -13,6 +13,7 @@ import (
 
 // setupCLITest: 起测试服务器（hou/wu 两人频道 duo；hou/wu/sun 三人频道 trio），
 // 以 username 身份登录 CLI 并 init 到指定频道的临时项目目录。
+// 同时为需要人的钥匙的操作创建 session token。
 func setupCLITest(t *testing.T, username, channel string) (*store.Store, map[string]*store.User, string) {
 	t.Helper()
 	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
@@ -35,6 +36,10 @@ func setupCLITest(t *testing.T, username, channel string) (*store.Store, map[str
 	ts := httptest.NewServer(server.New(st, "http://relais.test", t.TempDir()).Handler())
 	t.Cleanup(ts.Close)
 	t.Setenv("RELAIS_CONFIG_DIR", t.TempDir())
+
+	// 为人的钥匙操作创建 session token
+	session, _ := st.CreateSession(users[username].ID)
+
 	if err := saveGlobal(&GlobalConfig{Server: ts.URL, Token: users[username].AgentToken, Username: username}); err != nil {
 		t.Fatal(err)
 	}
@@ -43,6 +48,10 @@ func setupCLITest(t *testing.T, username, channel string) (*store.Store, map[str
 	if err := RunInit([]string{channel}); err != nil {
 		t.Fatal(err)
 	}
+
+	// 保存 session token 供人的钥匙操作使用（如 RunAuto）
+	SaveSessionForTest(session)
+
 	return st, users, proj
 }
 
