@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"flag"
 	"fmt"
 	"os"
 	"os/exec"
@@ -101,6 +102,42 @@ func writeHook(info SetupInfo) (string, error) {
 	return hp, nil
 }
 
+func writeHookWindows(info SetupInfo) (string, error) {
+	hd, err := hooksDir()
+	if err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(hd, 0o755); err != nil {
+		return "", err
+	}
+	relais, _ := os.Executable()
+	if relais == "" {
+		relais = "relais"
+	}
+	agentCmd := "\"" + info.AgentPath + "\" -p \"%PROMPT%\""
+	if info.Agent == "codex" {
+		agentCmd = "\"" + info.AgentPath + "\" exec \"%PROMPT%\""
+	}
+	// cmd 批处理：请求 turn → 取引导 → 跑 agent → 据首行 NEEDS_HUMAN 分支
+	script := "@echo off\r\n" +
+		"cd /d \"%RELAIS_MSG_DIR%\" || exit /b 1\r\n" +
+		"\"" + relais + "\" auto-turn || (echo auto: 已暂停/检查点/需人处理 & exit /b 0)\r\n" +
+		"for /f \"delims=\" %%g in ('\"" + relais + "\" guidance-pull') do set GUIDANCE=%%g\r\n" +
+		"set PROMPT=读取 %RELAIS_MSG_PATH% 的消息并简短回复；若需人定夺只输出一行 NEEDS_HUMAN: 问题；否则只输出 --- summary --- 正文 的消息文件。雇主引导：%GUIDANCE%\r\n" +
+		"set OUT=%TEMP%\\relais-reply.md\r\n" +
+		agentCmd + " > \"%OUT%\"\r\n" +
+		"set /p FIRST=<\"%OUT%\"\r\n" +
+		"echo %FIRST% | findstr /b \"NEEDS_HUMAN:\" >nul && (\r\n" +
+		"  set Q=%FIRST:NEEDS_HUMAN: =%\r\n" +
+		"  \"" + relais + "\" needs-human \"%Q%\"\r\n" +
+		") || \"" + relais + "\" send \"%OUT%\"\r\n"
+	hp := filepath.Join(hd, "auto-reply.cmd")
+	if err := os.WriteFile(hp, []byte(script), 0o755); err != nil {
+		return "", err
+	}
+	return hp, nil
+}
+
 func saveSetup(info SetupInfo) error {
 	dir, err := configDir()
 	if err != nil {
@@ -115,6 +152,20 @@ func saveSetup(info SetupInfo) error {
 }
 
 func RunSetup(args []string) error {
+	fs := flag.NewFlagSet("setup", flag.ExitOnError)
+	service := fs.Bool("service", false, "装成开机启动后台服务")
+	fs.Parse(args)
+
+	// 如果指定了 --service，直接安装服务
+	if *service {
+		msg, err := installService()
+		if err != nil {
+			return err
+		}
+		fmt.Println(msg)
+		return nil
+	}
+
 	info := SetupInfo{OS: runtime.GOOS}
 	info.Agent, info.AgentPath = detectAgent(exec.LookPath)
 	if info.Agent == "" {
@@ -124,7 +175,13 @@ func RunSetup(args []string) error {
 		fmt.Println("  若想全自动：装一个命令行 agent（如 Codex CLI）后重跑 relais setup。")
 	} else {
 		info.Mode = "auto"
-		hp, err := writeHook(info)
+		var hp string
+		var err error
+		if info.OS == "windows" {
+			hp, err = writeHookWindows(info)
+		} else {
+			hp, err = writeHook(info)
+		}
 		if err != nil {
 			return err
 		}
