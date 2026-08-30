@@ -15,7 +15,7 @@ const I18N = {
     notify: "桌面通知", notifyHint: "页面在后台时，新消息弹系统通知。", notifyEnable: "启用桌面通知",
     notifyOn: "已启用 ✓", notifyDenied: "浏览器已拒绝（请在浏览器设置里允许）", backChat: "← 返回聊天",
     expand: "展开正文 ▾", collapse: "收起 ▴", copyRaw: "复制原文", feedAI: "复制给 AI 的指令",
-    markRead: "标记已读", copied: "已复制 ✓", draft: "草稿", del: "删除",
+    markRead: "标记已读", copied: "已复制 ✓", copyFail: "复制失败：请检查浏览器剪贴板权限", draft: "草稿", del: "删除",
     soloHint: "频道里目前只有你自己——用邀请链接把同伴拉进来后，这里会出现收件人。",
     recipients: "收件人：", noBody: "（无正文）", unreadPrefix: "未读",
   },
@@ -30,7 +30,7 @@ const I18N = {
     notify: "Desktop notifications", notifyHint: "Get a system notification for new messages while the tab is in background.", notifyEnable: "Enable notifications",
     notifyOn: "Enabled ✓", notifyDenied: "Blocked by browser (allow it in browser settings)", backChat: "← Back to chat",
     expand: "Show body ▾", collapse: "Hide ▴", copyRaw: "Copy raw", feedAI: "Copy AI instruction",
-    markRead: "Mark read", copied: "Copied ✓", draft: "DRAFT", del: "Delete",
+    markRead: "Mark read", copied: "Copied ✓", copyFail: "Copy failed — check the browser's clipboard permission", draft: "DRAFT", del: "Delete",
     soloHint: "You are the only member so far — invite your partner and recipients will appear here.",
     recipients: "To: ", noBody: "(no body)", unreadPrefix: "Unread",
   },
@@ -45,7 +45,7 @@ const I18N = {
     notify: "Desktop-Benachrichtigungen", notifyHint: "Systembenachrichtigung bei neuen Nachrichten, wenn der Tab im Hintergrund ist.", notifyEnable: "Benachrichtigungen aktivieren",
     notifyOn: "Aktiviert ✓", notifyDenied: "Vom Browser blockiert (in den Browsereinstellungen erlauben)", backChat: "← Zurück zum Chat",
     expand: "Inhalt zeigen ▾", collapse: "Einklappen ▴", copyRaw: "Rohtext kopieren", feedAI: "KI-Anweisung kopieren",
-    markRead: "Als gelesen markieren", copied: "Kopiert ✓", draft: "ENTWURF", del: "Löschen",
+    markRead: "Als gelesen markieren", copied: "Kopiert ✓", copyFail: "Kopieren fehlgeschlagen — Zwischenablage-Berechtigung im Browser prüfen", draft: "ENTWURF", del: "Löschen",
     soloHint: "Du bist bisher das einzige Mitglied — lade deine Partnerin ein, dann erscheinen hier Empfänger.",
     recipients: "An: ", noBody: "(kein Inhalt)", unreadPrefix: "Ungelesen",
   },
@@ -120,7 +120,7 @@ async function copyText(btn, text) {
     btn.textContent = t("copied");
     setTimeout(() => { btn.textContent = old; }, 1500);
   } catch {
-    $("send-err").textContent = "复制失败：请检查浏览器剪贴板权限";
+    $("send-err").textContent = t("copyFail");
   }
 }
 

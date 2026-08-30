@@ -13,9 +13,9 @@
     <p id="invite-target" class="muted" data-i18n="checking">正在检查邀请……</p>
     <div id="step1">
       <h2 data-i18n="step1">第 1 步 · 创建账号</h2>
-      <label data-i18n="uname">用户名（小写字母开头，仅小写/数字/横线）<input id="j-user"></label>
-      <label data-i18n="dname">显示名（给同伴看的名字）<input id="j-display"></label>
-      <label data-i18n="pw">密码（至少 8 位）<input id="j-pass" type="password"></label>
+      <label><span data-i18n="uname">用户名（小写字母开头，仅小写/数字/横线）</span> <input id="j-user"></label>
+      <label><span data-i18n="dname">显示名（给同伴看的名字）</span> <input id="j-display"></label>
+      <label><span data-i18n="pw">密码（至少 8 位）</span> <input id="j-pass" type="password"></label>
       <button id="j-btn" data-i18n="create">创建账号并加入</button>
       <p id="j-err" class="err" hidden></p>
     </div>
@@ -41,8 +41,7 @@
       <p data-i18n="noCliHint">把下面的格式模板发给你的 AI，让它按格式生成消息文件；生成后整段复制（或存成 .md 文件），拖进 Relais 网页的发送框——摘要会自动填好。</p>
       <pre id="tpl"></pre>
     </details>
-    <p data-i18n="done">完成！打开 <a id="home-link" href="/">Relais 网页</a> 用刚才的用户名密码登录。<br>
-    <span data-i18n="pwa">小提示：浏览器菜单里选「安装应用」，Relais 就会像独立软件一样出现在任务栏/程序坞。</span></p>
+    <p><span data-i18n="done">完成！打开 Relais 网页用刚才的用户名密码登录。</span> <a id="home-link" href="/">Relais →</a><br><span data-i18n="pwa">小提示：浏览器菜单里选「安装应用」，Relais 就会像独立软件一样出现在任务栏/程序坞。</span></p>
   </div>
 </div>
 <script>
@@ -75,7 +74,7 @@ const J18N = {
     noCliTab: "I don't use a CLI (web ChatGPT etc.)",
     noCliHint: "Send the template below to your AI so it generates messages in the right format; then copy the result (or save as .md) and drop it into the Relais composer — the summary fills itself.",
     done: "Done! Open the Relais page and sign in with your new credentials.",
-    pwa: "Tip: use your browser's "Install app" to get Relais as a standalone window." },
+    pwa: "Tip: use your browser's “Install app” to get Relais as a standalone window." },
   de: { title: "Du bist zu Relais eingeladen", checking: "Einladung wird geprüft…",
     invalid: "Dieser Einladungslink ist ungültig oder abgelaufen — bitte um einen neuen.",
     step1: "Schritt 1 · Konto anlegen", uname: "Benutzername (Kleinbuchstabe zuerst; a-z, 0-9, Bindestrich)",
@@ -89,7 +88,7 @@ const J18N = {
     noCliTab: "Ich nutze kein CLI (Web-ChatGPT o. ä.)",
     noCliHint: "Schick deiner KI die Vorlage unten, damit sie Nachrichten im richtigen Format erzeugt; das Ergebnis kopieren (oder als .md speichern) und in das Relais-Eingabefeld ziehen — die Zusammenfassung füllt sich selbst.",
     done: "Fertig! Öffne die Relais-Seite und melde dich an.",
-    pwa: "Tipp: Über „App installieren" im Browser wird Relais ein eigenständiges Fenster." },
+    pwa: "Tipp: Über „App installieren” im Browser wird Relais ein eigenständiges Fenster." },
 };
 function detectLang() {
   let saved = null;
