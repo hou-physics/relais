@@ -20,7 +20,8 @@ case "${1:-}" in
     build
     ./scripts/check.sh
     scp dist/relais-linux-amd64 "$2:/tmp/relais-new"
-    scp dist/relais-darwin-arm64 dist/relais-darwin-amd64 dist/relais-windows-amd64.exe \
+    # downloads/ 里要放齐 install.sh/install.ps1 会请求的四个平台二进制（含 linux，M5 install.sh 支持 Linux）
+    scp dist/relais-linux-amd64 dist/relais-darwin-arm64 dist/relais-darwin-amd64 dist/relais-windows-amd64.exe \
         "$2:/var/lib/relais/downloads/" || echo "（上传 downloads 失败：请确认服务器已 mkdir -p /var/lib/relais/downloads 且当前 ssh 用户有写权限，或用 sudo 手动拷贝)"
     ssh "$2" 'sudo install -m755 /tmp/relais-new /usr/local/bin/relais && sudo systemctl restart relais && systemctl is-active relais'
     echo "部署完成"
