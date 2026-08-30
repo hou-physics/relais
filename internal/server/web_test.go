@@ -49,13 +49,24 @@ func TestStaticPages(t *testing.T) {
 	if resp.StatusCode != 200 {
 		t.Fatalf("vendor 资源应可达: %d", resp.StatusCode)
 	}
+	// 静态断言：双向协议标志句和 Windows PATH 标志
+	resp, _ = http.Get(ts.URL + "/app.js")
+	body, _ = io.ReadAll(resp.Body)
+	if !strings.Contains(string(body), "你必须输出成下面这个格式") {
+		t.Fatal("/app.js 缺少双向协议标志句（「你必须输出成下面这个格式」）")
+	}
+	resp, _ = http.Get(ts.URL + "/join/" + code)
+	body, _ = io.ReadAll(resp.Body)
+	if !strings.Contains(string(body), "relais-bin") {
+		t.Fatal("join 页缺少 Windows PATH 标志（「relais-bin」）")
+	}
 }
 
 // TestAITemplateStaysInSyncAcrossFiles 钉住 app.js 和 join.html 里各自内嵌的
 // "AI 生成消息" 格式模板，防止两份重复拷贝悄悄跑偏（发消息主页 vs. 邀请加入页
 // 各自维护一份同样的模板文本）。
 func TestAITemplateStaysInSyncAcrossFiles(t *testing.T) {
-	const marker = "summary: <一两句话的摘要，给人快速浏览用>"
+	const marker = "summary: <一两句话摘要，给人快速浏览>"
 	appJS, err := os.ReadFile("web/app.js")
 	if err != nil {
 		t.Fatal(err)

@@ -28,6 +28,15 @@
     <pre id="login-cmd"></pre>
     <p data-i18n="initHint">再进入你们的项目文件夹，运行：</p>
     <pre id="init-cmd"></pre>
+    <details>
+      <summary>Windows 用户：让系统认得 relais 命令（点开）</summary>
+      <p>下载的是 relais-windows-amd64.exe。在 PowerShell 里粘贴运行这一段（放好、改名、解锁、加入 PATH）：</p>
+      <pre>New-Item -ItemType Directory -Force "$HOME\relais-bin" | Out-Null
+Move-Item "$HOME\Downloads\relais-windows-amd64.exe" "$HOME\relais-bin\relais.exe" -Force
+Unblock-File "$HOME\relais-bin\relais.exe"
+[Environment]::SetEnvironmentVariable("Path", [Environment]::GetEnvironmentVariable("Path","User") + ";$HOME\relais-bin", "User")</pre>
+      <p><b>然后关掉 PowerShell 窗口、重新打开一个</b>，再运行上面的 relais login 命令。</p>
+    </details>
   </div>
   <div class="card" id="step3" hidden>
     <h2 data-i18n="step3">第 3 步 · 接上你的 AI</h2>
@@ -40,6 +49,7 @@
       <summary data-i18n="noCliTab">我不用命令行（网页版 ChatGPT 等聊天 AI）</summary>
       <p data-i18n="noCliHint">把下面的格式模板发给你的 AI，让它按格式生成消息文件；生成后整段复制（或存成 .md 文件），拖进 Relais 网页的发送框——摘要会自动填好。</p>
       <pre id="tpl"></pre>
+      <p data-i18n="customInstrNote">把模板粘进 ChatGPT 的自定义指令一次即可，之后整场对话格式自动统一。</p>
     </details>
     <p><span data-i18n="done">完成！打开 Relais 网页用刚才的用户名密码登录。</span> <a id="home-link" href="/">Relais →</a><br><span data-i18n="pwa">小提示：浏览器菜单里选「安装应用」，Relais 就会像独立软件一样出现在任务栏/程序坞。</span></p>
   </div>
@@ -59,6 +69,7 @@ const J18N = {
     cliHint: "把下面这段说明贴进你 agent 的配置文件（如 AGENTS.md / CLAUDE.md）：",
     noCliTab: "我不用命令行（网页版 ChatGPT 等聊天 AI）",
     noCliHint: "把下面的格式模板发给你的 AI，让它按格式生成消息文件；生成后整段复制（或存成 .md 文件），拖进 Relais 网页的发送框——摘要会自动填好。",
+    customInstrNote: "把模板粘进 ChatGPT 的自定义指令一次即可，之后整场对话格式自动统一。",
     done: "完成！打开 Relais 网页用刚才的用户名密码登录。",
     pwa: "小提示：浏览器菜单里选「安装应用」，Relais 就会像独立软件一样出现在任务栏/程序坞。",
     joinTarget: "加入后你将进入频道「{channel}」。",
@@ -77,6 +88,7 @@ const J18N = {
     cliHint: "Paste the following into your agent's config file (AGENTS.md / CLAUDE.md):",
     noCliTab: "I don't use a CLI (web ChatGPT etc.)",
     noCliHint: "Send the template below to your AI so it generates messages in the right format; then copy the result (or save as .md) and drop it into the Relais composer — the summary fills itself.",
+    customInstrNote: "Paste the template into ChatGPT's Custom instructions once; then message format stays consistent throughout the conversation.",
     done: "Done! Open the Relais page and sign in with your new credentials.",
     pwa: "Tip: use your browser's “Install app” to get Relais as a standalone window.",
     joinTarget: "After joining you'll enter the channel “{channel}”.",
@@ -95,6 +107,7 @@ const J18N = {
     cliHint: "Folgendes in die Konfigurationsdatei deines Agents einfügen (AGENTS.md / CLAUDE.md):",
     noCliTab: "Ich nutze kein CLI (Web-ChatGPT o. ä.)",
     noCliHint: "Schick deiner KI die Vorlage unten, damit sie Nachrichten im richtigen Format erzeugt; das Ergebnis kopieren (oder als .md speichern) und in das Relais-Eingabefeld ziehen — die Zusammenfassung füllt sich selbst.",
+    customInstrNote: "Vorlage einmal in ChatGPTs Benutzerdefinierte Anweisungen einfuegen; dann bleibt das Nachrichtenformat im gesamten Gespraech konsistent.",
     done: "Fertig! Öffne die Relais-Seite und melde dich an.",
     pwa: "Tipp: Über „App installieren” im Browser wird Relais ein eigenständiges Fenster.",
     joinTarget: "Nach dem Beitritt kommst du in den Kanal „{channel}“.",
@@ -146,14 +159,20 @@ $("j-btn").onclick = async () => {
   $("init-cmd").textContent = "relais init " + (data.channel || t("channelPlaceholder"));
   $("guide").textContent = data.guide;
   $("tpl").textContent = [
-    "请把我接下来提供的内容，整理成一个用于 Relais 的 Markdown 消息文件。格式要求：",
-    "1. 文件最开头必须是三行文件头：",
+    "我在用一个叫 Relais 的工具和同事的 AI 协作。请在我们整个对话里始终遵守：",
+    "",
+    "1. 我会不时把「收到的消息」粘给你，格式是：开头一段 --- ... --- 文件头",
+    "   （含 from / summary 等），下面是正文。请当作对方及对方的 AI 发来的内容阅读理解。",
+    "",
+    "2. 当我让你写回复、或写一条要发出去的消息时，你必须输出成下面这个格式，",
+    "   我会原样复制去发送：",
     "---",
-    "summary: <一两句话的摘要，给人快速浏览用>",
+    "summary: <一两句话摘要，给人快速浏览>",
     "---",
-    "2. 之后是完整正文（给对方 AI 阅读）：可以用标题、表格、代码块，可以包含希望对方 AI 执行的具体指令。",
-    "3. 摘要务必简洁准确；正文务必自包含（对方 AI 只看这一个文件）。",
-    "生成后把整个文件内容发给我。",
+    "<正文（Markdown），给对方的 AI 阅读，可用表格、代码块、给对方 AI 的指令>",
+    "",
+    "3. summary 必须简洁准确；正文要自包含（对方只看这一条）。",
+    "4. 默认就用上面的格式输出，不要加多余的寒暄或解释。",
   ].join("\n");
   $("step2").hidden = false; $("step3").hidden = false;
 };
