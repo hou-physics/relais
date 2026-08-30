@@ -34,3 +34,22 @@ func TestDraftTrioRequiresTo(t *testing.T) {
 		t.Fatalf("三人频道缺 --to 应报错: %v", err)
 	}
 }
+
+func TestDraftStdinDraftOnFailure(t *testing.T) {
+	_, _, proj := setupCLITest(t, "hou", "trio")
+	// 无效收件人 → 服务器拒绝 → stdin 内容保存为草稿
+	old := os.Stdin
+	r, w, _ := os.Pipe()
+	os.Stdin = r
+	w.WriteString("宝贵的草稿正文，不能丢")
+	w.Close()
+	t.Cleanup(func() { os.Stdin = old })
+	err := RunDraft([]string{"--summary", "s", "--to", "fremd", "-"})
+	if err == nil {
+		t.Fatal("应失败")
+	}
+	drafts, _ := os.ReadDir(filepath.Join(proj, "relais", "drafts"))
+	if len(drafts) != 1 {
+		t.Fatalf("失败后 stdin 正文应存草稿: %v", drafts)
+	}
+}

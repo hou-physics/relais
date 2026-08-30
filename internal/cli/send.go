@@ -28,6 +28,19 @@ type outgoing struct {
 	fromStdin bool
 }
 
+// failWithDraft 在 stdin 输入的请求失败时把原始正文落盘为本地草稿，避免内容丢失。
+func (o *outgoing) failWithDraft(err error) error {
+	if !o.fromStdin {
+		return err
+	}
+	draft := filepath.Join(o.root, "relais", "drafts",
+		time.Now().UTC().Format("20060102-150405")+".md")
+	if werr := os.WriteFile(draft, o.body, 0o644); werr == nil {
+		return fmt.Errorf("%w（正文已保存到 %s）", err, draft)
+	}
+	return err
+}
+
 func prepareOutgoing(args []string, verb string) (*outgoing, error) {
 	fs := flag.NewFlagSet(verb, flag.ContinueOnError)
 	var to multiFlag
@@ -123,21 +136,9 @@ func RunSend(args []string) error {
 	if err != nil {
 		return err
 	}
-	// Draft protection closure: wraps any subsequent error to save stdin if needed
-	failWithDraft := func(err error) error {
-		if !o.fromStdin {
-			return err
-		}
-		draft := filepath.Join(o.root, "relais", "drafts",
-			time.Now().UTC().Format("20060102-150405")+".md")
-		if werr := os.WriteFile(draft, o.body, 0o644); werr == nil {
-			return fmt.Errorf("%w（正文已保存到 %s）", err, draft)
-		}
-		return err
-	}
 	sent, err := o.client.Send(o.proj.Channel, o.req)
 	if err != nil {
-		return failWithDraft(fmt.Errorf("发送失败: %w", err))
+		return o.failWithDraft(fmt.Errorf("发送失败: %w", err))
 	}
 	// sent/ 副本（本地快照；事实源在服务器）
 	copyPath := filepath.Join(o.root, "relais", "sent", localName(sent.ID, sent.CreatedAt, o.cfg.Username))
