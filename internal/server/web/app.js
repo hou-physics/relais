@@ -190,7 +190,7 @@ function renderToRow() {
     const cb = document.createElement("input");
     cb.type = "checkbox"; cb.value = m.username;
     cb.checked = others.length === 1; // 双人频道默认对方
-    label.append(cb, avatarNode(m.username, m.display_name, m.avatar || ""));
+    label.append(cb, avatarNode(m.username, m.display_name, m.avatar || ""), " " + m.display_name);
     row.appendChild(label);
   }
 }
