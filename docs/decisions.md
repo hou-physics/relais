@@ -5,6 +5,30 @@
 
 ---
 
+## 2026-08-30 · D27 管理员 CLI 隐藏密码输入引入 golang.org/x/term
+
+- **问题**：`relais admin login` 输入密码时是否隐藏回显。
+- **考虑过**：明文回显（省依赖，但密码进终端 scrollback，肩窥风险）；粘贴网页 session token（免密码但多步）。
+- **选择**：引入 `golang.org/x/term`（官方 x 包，体积小）隐藏密码回显。依赖白名单加此一项（原白名单五个 → 六个）。
+- **状态**：live。
+- **反转触发**：无。
+
+## 2026-08-30 · D26 管理员 CLI 用 session cookie 鉴权，与 agent token 隔离
+
+- **问题**：管理员 CLI 命令如何鉴权，才能不让 agent token 获得管理权。
+- **考虑过**：让 agent token 带管理权（被否：违反 D25 安全底线）；改认证核心加管理位（被否：无必要）。
+- **选择**：`relais admin login` 用密码换取 session（存 admin.toml），管理命令以 `Cookie: relais_session=<session>` 头发请求——服务器既有 auth 的 cookie 分支即当"人的钥匙"。agent token 路径完全不碰管理。零认证核心改动。
+- **状态**：live。
+- **反转触发**：无。
+
+## 2026-08-30 · D25 管理员权限：仅 hou_physics，只走人的钥匙，agent token 永不获管理权
+
+- **问题**：谁是管理员，管理操作用哪把钥匙。
+- **考虑过**：agent 也能管（被否：被喂坏指令的 agent 可自建频道/拉人）；你俩都是管理员（Hou 经 AskUserQuestion 否，选"只有我"）。
+- **选择**：`users.is_admin`，仅 hou_physics 为真。`adminOnly` 中间件 = 人的钥匙 + is_admin，`/api/admin/*` 对**任何 agent token（含管理员本人的）一律 403**。永久锚点测试守此不变量。
+- **状态**：live。
+- **反转触发**：Hou 要求加第二管理员 → SetAdmin 支持多个，UI 另做转让/多管理员视图。
+
 ## 2026-08-30 · D24 草稿转正：先校验、原子消费、后发送（安全顺序）
 
 - **问题**：`relais draft` 提交的草稿在网页确认发送时，如何保证不重发、不吞草稿、不越权。
