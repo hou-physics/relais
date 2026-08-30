@@ -62,7 +62,7 @@ func (s *Server) Handler() http.Handler {
 		panic(err)
 	}
 	staticFiles := http.FileServerFS(sub)
-	mux.HandleFunc("GET /join/{code}", func(w http.ResponseWriter, r *http.Request) {
+	mux.Handle("GET /join/{code}", s.cacheStatic(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		data, err := webFS.ReadFile("web/join.html")
 		if err != nil {
 			http.NotFound(w, r)
@@ -70,8 +70,8 @@ func (s *Server) Handler() http.Handler {
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Write(data)
-	})
-	mux.Handle("GET /", staticFiles)
+	})))
+	mux.Handle("GET /", s.cacheStatic(staticFiles))
 
 	return mux
 }

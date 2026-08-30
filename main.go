@@ -7,6 +7,7 @@ import (
 	"github.com/hou-physics/relais/internal/cli"
 )
 
+// 发版时与 server 包的 Version 常量同步更新。
 const version = "0.3.0-m4"
 
 func main() {
