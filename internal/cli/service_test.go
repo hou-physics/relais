@@ -55,4 +55,16 @@ func TestWindowsHookHasGuardrails(t *testing.T) {
 	if strings.Contains(h, "^& exit /b 0") {
 		t.Fatal("windows hook auto-turn 分支用了转义的 ^&，exit 不会执行（闸门失效）")
 	}
+	// 转义锚点：GUIDANCE（雇主自由文本）与 Q（agent 输出）拼进命令行前必须剥离双引号，
+	// 否则一个 " 会截断 -p "%PROMPT%" / needs-human "!Q!"。
+	if !strings.Contains(h, `set GUIDANCE=!GUIDANCE:"=!`) {
+		t.Fatal("windows hook 未剥离 GUIDANCE 里的双引号（命令行注入/截断风险）")
+	}
+	if !strings.Contains(h, `set Q=!Q:"=!`) {
+		t.Fatal("windows hook 未剥离 Q 里的双引号（needs-human 参数截断风险）")
+	}
+	// 临时文件用 %RANDOM% 避免并发碰撞
+	if !strings.Contains(h, "relais-reply-%RANDOM%.md") {
+		t.Fatal("windows hook 临时输出文件未加 %RANDOM%（并发碰撞风险）")
+	}
 }
