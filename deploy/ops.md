@@ -22,3 +22,12 @@
 - 看日志：`journalctl -u relais -f`。
 - 服务挂了：systemd 3 秒自动拉起；手动 `sudo systemctl restart relais`。
 - 恢复备份：停服务 → 用 /var/backups/relais 里最近的 .db 覆盖 → 起服务。
+
+## relais bridge（本地桥接，装在每个人自己的电脑上）
+
+- 一次性：每个项目文件夹里 `relais init <频道名>`（会自动登记到本机注册表）。
+- 日常：任意目录运行 `relais bridge` —— 一个进程照看全部已登记项目：新消息自动落到对应项目的
+  relais/inbox/ 并弹系统通知。`--interval 秒数` 调轮询频率。
+- 进阶：`relais bridge --hook '<命令>'` 在每条新消息落盘后执行你的命令（环境变量
+  RELAIS_MSG_PATH / RELAIS_MSG_DIR / RELAIS_MSG_FROM / RELAIS_MSG_SUMMARY / RELAIS_MSG_ID）。
+  例如接一段自己的脚本去唤起本地 AI —— 工具本身不预置任何 AI 调用。

@@ -107,3 +107,66 @@ func TestAnchorFullLoop(t *testing.T) {
 		t.Fatalf("锚点3 人应全透明: %v", err)
 	}
 }
+
+func TestAnchorM2Flows(t *testing.T) {
+	w := newWorld(t)
+
+	// 锚点 5：frontmatter 摘要贯通（CLI 无 --summary）
+	houProj := w.actAs(t, "hou", "duo")
+	md := filepath.Join(houProj, "fm.md")
+	os.WriteFile(md, []byte("---\nsummary: FM摘要\n---\n\n正文X"), 0o644)
+	if err := cli.RunSend([]string{md}); err != nil {
+		t.Fatalf("锚点5 frontmatter 发送失败: %v", err)
+	}
+
+	// 锚点 6：草稿仅作者可见 + 转正闭环
+	os.WriteFile(md, []byte("---\nsummary: 草稿FM\n---\n\n草稿正文"), 0o644)
+	if err := cli.RunDraft([]string{md}); err != nil {
+		t.Fatalf("锚点6 draft 失败: %v", err)
+	}
+	duoCh, _ := w.st.ChannelByName("duo")
+	drafts, _ := w.st.ListDrafts(duoCh.ID, w.users["hou"].ID)
+	if len(drafts) != 1 {
+		t.Fatalf("作者应有 1 条草稿: %+v", drafts)
+	}
+	if l, _ := w.st.ListDrafts(duoCh.ID, w.users["wu"].ID); len(l) != 0 {
+		t.Fatalf("锚点6 非作者必须不可见: %+v", l)
+	}
+	// 作者经 HTTP 发送草稿
+	req, _ := http.NewRequest("POST", w.ts.URL+"/api/drafts/"+drafts[0].ID+"/send", nil)
+	req.Header.Set("Authorization", "Bearer "+w.users["hou"].AgentToken)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil || resp.StatusCode != 200 {
+		t.Fatalf("锚点6 转正应 200: %v %d", err, resp.StatusCode)
+	}
+
+	// 锚点 7：bridge pollOnce 落盘（wu 侧两条未读：FM摘要 + 草稿转正）
+	wuProj := w.actAs(t, "wu", "duo")
+	c, err := cli.NewClientForTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	landed, err := cli.PollOnceForTest(c, "duo", wuProj)
+	if err != nil || landed != 2 {
+		t.Fatalf("锚点7 bridge 应落 2 条: %d %v", landed, err)
+	}
+	entries, _ := os.ReadDir(filepath.Join(wuProj, "relais", "inbox"))
+	if len(entries) != 2 {
+		t.Fatalf("锚点7 inbox 应 2 个文件: %v", entries)
+	}
+
+	// 锚点 8：token 重置后旧 token 401
+	newTok, _ := w.st.RegenerateToken(w.users["sun"].ID)
+	reqOld, _ := http.NewRequest("GET", w.ts.URL+"/api/me", nil)
+	reqOld.Header.Set("Authorization", "Bearer "+w.users["sun"].AgentToken)
+	respOld, _ := http.DefaultClient.Do(reqOld)
+	if respOld.StatusCode != 401 {
+		t.Fatalf("锚点8 旧 token 应 401, got %d", respOld.StatusCode)
+	}
+	reqNew, _ := http.NewRequest("GET", w.ts.URL+"/api/me", nil)
+	reqNew.Header.Set("Authorization", "Bearer "+newTok)
+	respNew, _ := http.DefaultClient.Do(reqNew)
+	if respNew.StatusCode != 200 {
+		t.Fatalf("锚点8 新 token 应 200, got %d", respNew.StatusCode)
+	}
+}

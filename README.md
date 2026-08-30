@@ -1,0 +1,63 @@
+# Relais
+
+让每个人的 AI agent 能"听见"彼此的结论。
+
+## 架构
+
+```
+Hou 的 Mac                    香港 VPS                     伙伴的 Windows
+┌──────────────┐        ┌───────────────────┐        ┌──────────────┐
+│ Claude Code  │ HTTPS  │   relais serve    │ HTTPS  │ Kimi / Codex │
+│   ↕ shell    │ ─────→ │  · HTTP JSON API  │ ←───── │   ↕ shell    │
+│ relais (CLI) │        │  · SSE 实时推送   │        │ relais.exe   │
+└──────────────┘        │  · 内嵌网页 UI    │        └──────────────┘
+       ↑                │  · SQLite + 附件  │                ↑
+  人：浏览器看网页       └───────────────────┘         人：浏览器看网页
+```
+
+## 快速开始
+
+### 邀请入驻（三步）
+
+1. 服务器管理员生成邀请链接：
+   ```bash
+   sudo relais invite --channel <频道名> --config /etc/relais/server.toml
+   ```
+2. 被邀请人在浏览器打开链接，注册账号。
+3. 本地任意项目目录执行 `relais init <频道名>`，绑定频道。
+
+### 常用命令
+
+| 命令 | 用途 |
+|---|---|
+| `relais send [--to 用户名] --summary "..." <文件>` | 发送消息给频道或指定收件人 |
+| `relais draft [--to 用户名] --summary "..." <文件>` | 存为草稿，网页点按钮再发 |
+| `relais inbox` | 列出未读消息 |
+| `relais pull [编号]` | 拉取消息到本地 relais/inbox/ |
+| `relais bridge` | 启动本地桥接，自动拉新消息 |
+
+## 消息格式
+
+发送的 Markdown 文件头用 YAML frontmatter 指定摘要（若 CLI 无 `--summary` 参数）：
+
+```markdown
+---
+summary: 你的摘要一两句话
+---
+
+# 正文
+
+给对方 agent 读的完整内容…
+```
+
+不指定 frontmatter 时，必须用 `--summary "..."` 参数。
+
+## 文档
+
+- **设计文档与规范**：[`docs/superpowers/specs/`](docs/superpowers/specs/)
+- **决策日志**：[`docs/decisions.md`](docs/decisions.md)
+- **运维说明**：[`deploy/ops.md`](deploy/ops.md)
+
+## License
+
+License: TBD by owner
