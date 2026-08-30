@@ -43,4 +43,8 @@ func TestWindowsHookHasGuardrails(t *testing.T) {
 			t.Fatalf("windows hook 缺少 %q", want)
 		}
 	}
+	// 检查格式校验：必须在 send 前检查 --- 前缀
+	if !strings.Contains(h, "findstr /b /c:\"---\"") {
+		t.Fatal("windows hook 缺少格式校验（--- 前缀）")
+	}
 }

@@ -91,11 +91,7 @@ func writeHook(info SetupInfo) (string, error) {
 		"  echo \"auto: agent 输出格式不符，跳过本条\"\n" +
 		"fi\n" +
 		"rm -f \"$OUT\"\n"
-	name := "auto-reply.sh"
-	if info.OS == "windows" {
-		name = "auto-reply.cmd" // Windows 版：M5 生成占位（bridge 用 cmd /C 调），实现见下
-	}
-	hp := filepath.Join(hd, name)
+	hp := filepath.Join(hd, "auto-reply.sh")
 	if err := os.WriteFile(hp, []byte(script), 0o755); err != nil {
 		return "", err
 	}
@@ -118,19 +114,30 @@ func writeHookWindows(info SetupInfo) (string, error) {
 	if info.Agent == "codex" {
 		agentCmd = "\"" + info.AgentPath + "\" exec \"%PROMPT%\""
 	}
-	// cmd 批处理：请求 turn → 取引导 → 跑 agent → 据首行 NEEDS_HUMAN 分支
+	// cmd 批处理：请求 turn → 取引导 → 跑 agent → 三分支（NEEDS_HUMAN/格式校验/跳过）
 	script := "@echo off\r\n" +
+		"setlocal enabledelayedexpansion\r\n" +
 		"cd /d \"%RELAIS_MSG_DIR%\" || exit /b 1\r\n" +
-		"\"" + relais + "\" auto-turn || (echo auto: 已暂停/检查点/需人处理 & exit /b 0)\r\n" +
-		"for /f \"delims=\" %%g in ('\"" + relais + "\" guidance-pull') do set GUIDANCE=%%g\r\n" +
-		"set PROMPT=读取 %RELAIS_MSG_PATH% 的消息并简短回复；若需人定夺只输出一行 NEEDS_HUMAN: 问题；否则只输出 --- summary --- 正文 的消息文件。雇主引导：%GUIDANCE%\r\n" +
-		"set OUT=%TEMP%\\relais-reply.md\r\n" +
+		"\"" + relais + "\" auto-turn || (echo auto: 已暂停/检查点/需人处理 ^& exit /b 0)\r\n" +
+		"for /f \"delims=\" %%g in ('\"" + relais + "\" guidance-pull') do set \"GUIDANCE=%%g\"\r\n" +
+		"set \"PROMPT=读取 %RELAIS_MSG_PATH% 的消息并简短回复；若需人定夺只输出一行 NEEDS_HUMAN: 问题；否则只输出以 --- 开头的消息文件（--- summary --- 正文）。雇主引导：!GUIDANCE!\"\r\n" +
+		"set \"OUT=%TEMP%\\relais-reply.md\"\r\n" +
 		agentCmd + " > \"%OUT%\"\r\n" +
+		"set \"FIRST=\"\r\n" +
 		"set /p FIRST=<\"%OUT%\"\r\n" +
-		"echo %FIRST% | findstr /b \"NEEDS_HUMAN:\" >nul && (\r\n" +
-		"  set Q=%FIRST:NEEDS_HUMAN: =%\r\n" +
-		"  \"" + relais + "\" needs-human \"%Q%\"\r\n" +
-		") || \"" + relais + "\" send \"%OUT%\"\r\n"
+		"echo(!FIRST!| findstr /b /c:\"NEEDS_HUMAN:\" >nul\r\n" +
+		"if !errorlevel!==0 (\r\n" +
+		"  set \"Q=!FIRST:NEEDS_HUMAN:=!\"\r\n" +
+		"  \"" + relais + "\" needs-human \"!Q!\"\r\n" +
+		") else (\r\n" +
+		"  echo(!FIRST!| findstr /b /c:\"---\" >nul\r\n" +
+		"  if !errorlevel!==0 (\r\n" +
+		"    \"" + relais + "\" send \"%OUT%\"\r\n" +
+		"  ) else (\r\n" +
+		"    echo auto: agent 输出格式不符，跳过本条\r\n" +
+		"  )\r\n" +
+		")\r\n" +
+		"endlocal\r\n"
 	hp := filepath.Join(hd, "auto-reply.cmd")
 	if err := os.WriteFile(hp, []byte(script), 0o755); err != nil {
 		return "", err
