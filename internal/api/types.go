@@ -115,3 +115,33 @@ type AdminChannelRequest struct {
 type AdminMemberRequest struct {
 	Username string `json:"username"`
 }
+
+type AutoState struct {
+	Enabled     bool   `json:"enabled"`
+	RoundCount  int    `json:"round_count"`
+	Cap         int    `json:"cap"`
+	Paused      bool   `json:"paused"`
+	NeedsHumanQ string `json:"needs_human_q"`
+}
+
+type AutoConfigRequest struct {
+	Enabled bool `json:"enabled"`
+	Cap     int  `json:"cap"`
+}
+
+type GuidanceRequest struct {
+	Note string `json:"note"`
+}
+
+type NeedsHumanRequest struct {
+	Question string `json:"question"`
+}
+
+type TurnResponse struct {
+	Allowed bool   `json:"allowed"`
+	Reason  string `json:"reason"`
+}
+
+type GuidanceResponse struct {
+	Note string `json:"note"`
+}

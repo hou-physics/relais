@@ -56,6 +56,14 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/admin/channels/{name}/members", s.auth(s.adminOnly(s.handleAdminAddMember)))
 	mux.HandleFunc("DELETE /api/admin/channels/{name}/members/{username}", s.auth(s.adminOnly(s.handleAdminRemoveMember)))
 	mux.HandleFunc("POST /api/admin/channels/{name}/invites", s.auth(s.adminOnly(s.handleAdminInvite)))
+	mux.HandleFunc("GET /api/channels/{name}/auto", s.auth(s.autoState))
+	mux.HandleFunc("POST /api/channels/{name}/auto", s.auth(s.autoConfig))
+	mux.HandleFunc("POST /api/channels/{name}/auto/pause", s.auth(s.autoPause))
+	mux.HandleFunc("POST /api/channels/{name}/auto/resume", s.auth(s.autoResume))
+	mux.HandleFunc("POST /api/channels/{name}/auto/turn", s.auth(s.autoTurn))
+	mux.HandleFunc("POST /api/channels/{name}/auto/needs-human", s.auth(s.autoNeedsHuman))
+	mux.HandleFunc("POST /api/channels/{name}/guidance", s.auth(s.guidancePost))
+	mux.HandleFunc("GET /api/channels/{name}/guidance", s.auth(s.guidancePull))
 
 	sub, err := fs.Sub(webFS, "web")
 	if err != nil {
