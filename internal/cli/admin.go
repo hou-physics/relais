@@ -172,6 +172,32 @@ func RunInvite(args []string) error {
 	return nil
 }
 
+func RunAdminGrant(args []string) error {
+	if len(args) < 1 {
+		return fmt.Errorf("用法: relais admin grant <用户名> --config <server.toml>")
+	}
+	username := args[0]
+	fs := flag.NewFlagSet("admin grant", flag.ContinueOnError)
+	configPath := fs.String("config", "/etc/relais/server.toml", "服务器配置文件")
+	if err := fs.Parse(args[1:]); err != nil {
+		return err
+	}
+	st, _, err := openServerStore(*configPath)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+	u, err := st.UserByName(username)
+	if err != nil {
+		return fmt.Errorf("用户 %q 不存在", username)
+	}
+	if err := st.SetAdmin(u.ID, true); err != nil {
+		return err
+	}
+	fmt.Printf("%s 已设为管理员\n", username)
+	return nil
+}
+
 func newPassword() string {
 	const chars = "abcdefghjkmnpqrstuvwxyz23456789"
 	b := make([]byte, 12)

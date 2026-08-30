@@ -8,6 +8,7 @@ type Me struct {
 	DisplayName string `json:"display_name"`
 	Avatar      string `json:"avatar"`
 	Key         string `json:"key"` // "human" | "agent"
+	IsAdmin     bool   `json:"is_admin"`
 }
 
 type Member struct {
@@ -100,4 +101,17 @@ type TokenResponse struct {
 
 type ErrorResponse struct {
 	Error string `json:"error"`
+}
+
+type ChannelStat struct {
+	Name    string `json:"name"`
+	Members int    `json:"members"`
+}
+
+type AdminChannelRequest struct {
+	Name string `json:"name"`
+}
+
+type AdminMemberRequest struct {
+	Username string `json:"username"`
 }
