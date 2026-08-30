@@ -112,3 +112,44 @@ func (c *Client) Drafts(channel string) ([]api.Draft, error) {
 	err := c.do("GET", "/api/channels/"+url.PathEscape(channel)+"/drafts", nil, &out)
 	return out, err
 }
+
+type AdminClient struct {
+	Server  string
+	Session string
+	hc      *http.Client
+}
+
+func (c *AdminClient) do(method, path string, in, out any) error {
+	var body io.Reader
+	if in != nil {
+		b, err := json.Marshal(in)
+		if err != nil {
+			return err
+		}
+		body = bytes.NewReader(b)
+	}
+	req, err := http.NewRequest(method, c.Server+path, body)
+	if err != nil {
+		return err
+	}
+	req.AddCookie(&http.Cookie{Name: "relais_session", Value: c.Session})
+	if in != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	resp, err := c.hc.Do(req)
+	if err != nil {
+		return fmt.Errorf("无法连接服务器 %s: %w", c.Server, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		var e api.ErrorResponse
+		if json.NewDecoder(resp.Body).Decode(&e) == nil && e.Error != "" {
+			return fmt.Errorf("%s", e.Error)
+		}
+		return fmt.Errorf("服务器返回 %d", resp.StatusCode)
+	}
+	if out != nil {
+		return json.NewDecoder(resp.Body).Decode(out)
+	}
+	return nil
+}
