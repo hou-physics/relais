@@ -6,7 +6,9 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/oklog/ulid/v2"
@@ -27,6 +29,7 @@ CREATE TABLE IF NOT EXISTS users (
   display_name TEXT NOT NULL,
   password_hash TEXT NOT NULL,
   agent_token TEXT NOT NULL UNIQUE,
+  avatar TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS channels (
@@ -76,6 +79,16 @@ CREATE TABLE IF NOT EXISTS attachments (
   size INTEGER NOT NULL,
   mime TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS drafts (
+  id TEXT PRIMARY KEY,
+  channel_id INTEGER NOT NULL REFERENCES channels(id),
+  author_id INTEGER NOT NULL REFERENCES users(id),
+  to_json TEXT NOT NULL,
+  summary TEXT NOT NULL,
+  body_md TEXT NOT NULL,
+  in_reply_to TEXT,
+  created_at TEXT NOT NULL
+);
 `
 
 type Store struct{ db *sql.DB }
@@ -87,6 +100,10 @@ func Open(path string) (*Store, error) {
 		return nil, err
 	}
 	if _, err := db.Exec(schema); err != nil {
+		return nil, err
+	}
+	if _, err := db.Exec(`ALTER TABLE users ADD COLUMN avatar TEXT NOT NULL DEFAULT ''`); err != nil &&
+		!strings.Contains(err.Error(), "duplicate column") {
 		return nil, err
 	}
 	return &Store{db: db}, nil
@@ -109,6 +126,7 @@ type User struct {
 	Username    string
 	DisplayName string
 	AgentToken  string
+	Avatar      string
 }
 
 func (s *Store) CreateUser(username, displayName, password string) (*User, error) {
@@ -127,13 +145,13 @@ func (s *Store) CreateUser(username, displayName, password string) (*User, error
 	if err != nil {
 		return nil, err
 	}
-	return &User{ID: id, Username: username, DisplayName: displayName, AgentToken: token}, nil
+	return &User{ID: id, Username: username, DisplayName: displayName, AgentToken: token, Avatar: ""}, nil
 }
 
 func (s *Store) scanUser(row *sql.Row) (*User, string, error) {
 	var u User
 	var hash string
-	err := row.Scan(&u.ID, &u.Username, &u.DisplayName, &hash, &u.AgentToken)
+	err := row.Scan(&u.ID, &u.Username, &u.DisplayName, &hash, &u.AgentToken, &u.Avatar)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, "", ErrNotFound
 	}
@@ -143,7 +161,7 @@ func (s *Store) scanUser(row *sql.Row) (*User, string, error) {
 	return &u, hash, nil
 }
 
-const userCols = `id, username, display_name, password_hash, agent_token`
+const userCols = `id, username, display_name, password_hash, agent_token, avatar`
 
 func (s *Store) UserByName(username string) (*User, error) {
 	u, _, err := s.scanUser(s.db.QueryRow(`SELECT `+userCols+` FROM users WHERE username=?`, username))
@@ -205,7 +223,7 @@ func (s *Store) AddMember(channelID, userID int64) error {
 }
 
 func (s *Store) ListMembers(channelID int64) ([]User, error) {
-	rows, err := s.db.Query(`SELECT u.id, u.username, u.display_name, u.agent_token
+	rows, err := s.db.Query(`SELECT u.id, u.username, u.display_name, u.agent_token, u.avatar
 		FROM members m JOIN users u ON u.id=m.user_id WHERE m.channel_id=? ORDER BY u.username`, channelID)
 	if err != nil {
 		return nil, err
@@ -214,7 +232,7 @@ func (s *Store) ListMembers(channelID int64) ([]User, error) {
 	var out []User
 	for rows.Next() {
 		var u User
-		if err := rows.Scan(&u.ID, &u.Username, &u.DisplayName, &u.AgentToken); err != nil {
+		if err := rows.Scan(&u.ID, &u.Username, &u.DisplayName, &u.AgentToken, &u.Avatar); err != nil {
 			return nil, err
 		}
 		out = append(out, u)
@@ -234,6 +252,7 @@ type Message struct {
 	SenderID      int64
 	Sender        string
 	SenderDisplay string
+	SenderAvatar  string
 	To            []string
 	Summary       string
 	Body          string
@@ -288,7 +307,7 @@ func (s *Store) recipientNames(messageID string) ([]string, error) {
 }
 
 const envelopeQuery = `
-SELECT m.id, m.channel_id, m.sender_id, u.username, u.display_name,
+SELECT m.id, m.channel_id, m.sender_id, u.username, u.display_name, u.avatar,
        m.summary, COALESCE(m.in_reply_to,''), m.created_at,
        EXISTS(SELECT 1 FROM recipients ru WHERE ru.message_id=m.id AND ru.user_id=?1 AND ru.read_at IS NULL)
 FROM messages m JOIN users u ON u.id=m.sender_id
@@ -322,7 +341,7 @@ func (s *Store) ListEnvelopes(channelID, viewerID int64, agentKey, unreadOnly bo
 		var m Message
 		var created string
 		var unread int
-		if err := rows.Scan(&m.ID, &m.ChannelID, &m.SenderID, &m.Sender, &m.SenderDisplay,
+		if err := rows.Scan(&m.ID, &m.ChannelID, &m.SenderID, &m.Sender, &m.SenderDisplay, &m.SenderAvatar,
 			&m.Summary, &m.InReplyTo, &created, &unread); err != nil {
 			return nil, err
 		}
@@ -339,10 +358,10 @@ func (s *Store) ListEnvelopes(channelID, viewerID int64, agentKey, unreadOnly bo
 func (s *Store) GetMessage(id string, viewerID int64, agentKey bool) (*Message, error) {
 	var m Message
 	var created string
-	err := s.db.QueryRow(`SELECT m.id, m.channel_id, m.sender_id, u.username, u.display_name,
+	err := s.db.QueryRow(`SELECT m.id, m.channel_id, m.sender_id, u.username, u.display_name, u.avatar,
 		m.summary, m.body_md, COALESCE(m.in_reply_to,''), m.created_at
 		FROM messages m JOIN users u ON u.id=m.sender_id WHERE m.id=?`, id).
-		Scan(&m.ID, &m.ChannelID, &m.SenderID, &m.Sender, &m.SenderDisplay,
+		Scan(&m.ID, &m.ChannelID, &m.SenderID, &m.Sender, &m.SenderDisplay, &m.SenderAvatar,
 			&m.Summary, &m.Body, &m.InReplyTo, &created)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
@@ -526,4 +545,124 @@ func (s *Store) ChannelNameByID(id int64) (string, error) {
 func (s *Store) FirstUser() (*User, error) {
 	u, _, err := s.scanUser(s.db.QueryRow(`SELECT ` + userCols + ` FROM users ORDER BY id LIMIT 1`))
 	return u, err
+}
+
+type Draft struct {
+	ID        string
+	ChannelID int64
+	AuthorID  int64
+	To        []string
+	Summary   string
+	Body      string
+	InReplyTo string
+	CreatedAt time.Time
+}
+
+func (s *Store) CreateDraft(channelID, authorID int64, to []string, summary, body, inReplyTo string) (*Draft, error) {
+	id := ulid.Make().String()
+	toJSON, err := json.Marshal(to)
+	if err != nil {
+		return nil, err
+	}
+	var replyVal any
+	if inReplyTo != "" {
+		replyVal = inReplyTo
+	}
+	createdAt := now()
+	if _, err := s.db.Exec(`INSERT INTO drafts (id, channel_id, author_id, to_json, summary, body_md, in_reply_to, created_at)
+		VALUES (?,?,?,?,?,?,?,?)`, id, channelID, authorID, string(toJSON), summary, body, replyVal, createdAt); err != nil {
+		return nil, err
+	}
+	return s.GetDraft(id, authorID)
+}
+
+func (s *Store) scanDraft(row interface{ Scan(...any) error }) (*Draft, error) {
+	var d Draft
+	var toJSON, created string
+	err := row.Scan(&d.ID, &d.ChannelID, &d.AuthorID, &toJSON, &d.Summary, &d.Body, &d.InReplyTo, &created)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	if err := json.Unmarshal([]byte(toJSON), &d.To); err != nil {
+		return nil, err
+	}
+	d.CreatedAt, _ = time.Parse(time.RFC3339, created)
+	return &d, nil
+}
+
+const draftCols = `id, channel_id, author_id, to_json, summary, body_md, COALESCE(in_reply_to,''), created_at`
+
+func (s *Store) GetDraft(id string, authorID int64) (*Draft, error) {
+	return s.scanDraft(s.db.QueryRow(`SELECT `+draftCols+` FROM drafts WHERE id=? AND author_id=?`, id, authorID))
+}
+
+func (s *Store) ListDrafts(channelID, authorID int64) ([]Draft, error) {
+	rows, err := s.db.Query(`SELECT `+draftCols+` FROM drafts WHERE channel_id=? AND author_id=? ORDER BY id`, channelID, authorID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Draft
+	for rows.Next() {
+		d, err := s.scanDraft(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *d)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) DeleteDraft(id string, authorID int64) error {
+	res, err := s.db.Exec(`DELETE FROM drafts WHERE id=? AND author_id=?`, id, authorID)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (s *Store) UpdatePassword(userID int64, oldPw, newPw string) error {
+	var hash string
+	err := s.db.QueryRow(`SELECT password_hash FROM users WHERE id=?`, userID).Scan(&hash)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	if bcrypt.CompareHashAndPassword([]byte(hash), []byte(oldPw)) != nil {
+		return ErrAuth
+	}
+	newHash, err := bcrypt.GenerateFromPassword([]byte(newPw), bcrypt.DefaultCost)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Exec(`UPDATE users SET password_hash=? WHERE id=?`, string(newHash), userID)
+	return err
+}
+
+func (s *Store) RegenerateToken(userID int64) (string, error) {
+	token := randomToken(24)
+	_, err := s.db.Exec(`UPDATE users SET agent_token=? WHERE id=?`, token, userID)
+	return token, err
+}
+
+func (s *Store) UpdateProfile(userID int64, displayName, avatar string) error {
+	_, err := s.db.Exec(`UPDATE users SET display_name=?, avatar=? WHERE id=?`, displayName, avatar, userID)
+	return err
+}
+
+func (s *Store) DeleteSession(token string) error {
+	_, err := s.db.Exec(`DELETE FROM sessions WHERE token=?`, token)
+	return err
 }

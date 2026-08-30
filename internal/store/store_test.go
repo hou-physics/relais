@@ -260,3 +260,108 @@ func TestInvites(t *testing.T) {
 		t.Fatalf("过期邀请应失效, got %v", err)
 	}
 }
+
+func TestUsersAvatarMigration(t *testing.T) {
+	// Open 两次同一库：第二次的容错 ALTER 不得报错（幂等）
+	path := filepath.Join(t.TempDir(), "m.db")
+	s1, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	u, _ := s1.CreateUser("hou", "Hou", "pw123456")
+	if u.Avatar != "" {
+		t.Fatalf("新用户默认无头像: %+v", u)
+	}
+	s1.Close()
+	s2, err := Open(path)
+	if err != nil {
+		t.Fatalf("重复 Open 迁移应幂等: %v", err)
+	}
+	defer s2.Close()
+	if err := s2.UpdateProfile(u.ID, "侯", "🦉"); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := s2.UserByName("hou")
+	if got.DisplayName != "侯" || got.Avatar != "🦉" {
+		t.Fatalf("资料更新失败: %+v", got)
+	}
+}
+
+func TestDraftLifecycleAndIsolation(t *testing.T) {
+	s, ch, hou, wu, sun, _ := setupTrio(t)
+	d, err := s.CreateDraft(ch.ID, hou.ID, []string{"wu"}, "草稿摘要", "# 草稿正文", "")
+	if err != nil || d.ID == "" || len(d.To) != 1 || d.To[0] != "wu" {
+		t.Fatalf("建草稿失败: %+v %v", d, err)
+	}
+	list, _ := s.ListDrafts(ch.ID, hou.ID)
+	if len(list) != 1 || list[0].Summary != "草稿摘要" {
+		t.Fatalf("作者应见 1 条草稿: %+v", list)
+	}
+	// 隔离不变量：非作者（哪怕是收件人 wu）一律不可见
+	if l, _ := s.ListDrafts(ch.ID, wu.ID); len(l) != 0 {
+		t.Fatalf("非作者 List 应为空: %+v", l)
+	}
+	if _, err := s.GetDraft(d.ID, wu.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("非作者 Get 应 ErrNotFound, got %v", err)
+	}
+	if err := s.DeleteDraft(d.ID, sun.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("非作者 Delete 应 ErrNotFound, got %v", err)
+	}
+	if err := s.DeleteDraft(d.ID, hou.ID); err != nil {
+		t.Fatal(err)
+	}
+	if l, _ := s.ListDrafts(ch.ID, hou.ID); len(l) != 0 {
+		t.Fatalf("删除后应为空: %+v", l)
+	}
+}
+
+func TestSelfServiceAccount(t *testing.T) {
+	s := testStore(t)
+	u, _ := s.CreateUser("hou", "Hou", "altpass123")
+	if err := s.UpdatePassword(u.ID, "falsch", "neuepass123"); !errors.Is(err, ErrAuth) {
+		t.Fatalf("旧密码错应 ErrAuth, got %v", err)
+	}
+	if err := s.UpdatePassword(u.ID, "altpass123", "neuepass123"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Authenticate("hou", "neuepass123"); err != nil {
+		t.Fatalf("新密码应可登录: %v", err)
+	}
+	if _, err := s.Authenticate("hou", "altpass123"); !errors.Is(err, ErrAuth) {
+		t.Fatal("旧密码应失效")
+	}
+	newTok, err := s.RegenerateToken(u.ID)
+	if err != nil || newTok == u.AgentToken {
+		t.Fatalf("token 应更新: %v", err)
+	}
+	if _, err := s.UserByAgentToken(u.AgentToken); !errors.Is(err, ErrNotFound) {
+		t.Fatal("旧 token 应失效")
+	}
+	tok, _ := s.CreateSession(u.ID)
+	if err := s.DeleteSession(tok); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.UserBySession(tok); !errors.Is(err, ErrNotFound) {
+		t.Fatal("登出后 session 应失效")
+	}
+}
+
+func TestMessageCarriesSenderAvatar(t *testing.T) {
+	s, ch, hou, wu, _, m := setupTrio(t)
+	s.UpdateProfile(hou.ID, "Hou", "🦉")
+	m2, _ := s.SaveMessage(ch.ID, hou.ID, []int64{wu.ID}, "s2", "b", "")
+	if m2.SenderAvatar != "🦉" {
+		t.Fatalf("新消息应带发件人头像: %+v", m2)
+	}
+	list, _ := s.ListEnvelopes(ch.ID, wu.ID, true, false)
+	found := false
+	for _, e := range list {
+		if e.ID == m2.ID && e.SenderAvatar == "🦉" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("信封列表应带头像: %+v", list)
+	}
+	_ = m
+}
