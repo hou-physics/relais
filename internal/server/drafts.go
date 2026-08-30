@@ -108,6 +108,26 @@ func (s *Server) handleSendDraft(w http.ResponseWriter, r *http.Request, p princ
 		writeErr(w, http.StatusInternalServerError, "服务器内部错误")
 		return
 	}
+	// 作者必须仍是频道成员（与 handleSend 的 channelForMember 对称）
+	ok, err := s.st.IsMember(d.ChannelID, p.user.ID)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "服务器内部错误")
+		return
+	}
+	if !ok {
+		writeErr(w, http.StatusForbidden, "你不是频道 %q 的成员", chName)
+		return
+	}
+	// 先原子消费草稿（消除重试导致的重复发送风险）
+	err = s.st.DeleteDraft(d.ID, p.user.ID)
+	if errors.Is(err, store.ErrNotFound) {
+		writeErr(w, http.StatusNotFound, "草稿不存在")
+		return
+	}
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "服务器内部错误")
+		return
+	}
 	// 发送时重验：收件人此刻仍须是成员
 	ch := &store.Channel{ID: d.ChannelID, Name: chName}
 	req := api.SendRequest{To: d.To, Summary: d.Summary, Body: d.Body, InReplyTo: d.InReplyTo}
@@ -117,11 +137,7 @@ func (s *Server) handleSendDraft(w http.ResponseWriter, r *http.Request, p princ
 	}
 	m, err := s.st.SaveMessage(d.ChannelID, p.user.ID, ids, d.Summary, d.Body, d.InReplyTo)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "服务器内部错误")
-		return
-	}
-	if err := s.st.DeleteDraft(d.ID, p.user.ID); err != nil && !errors.Is(err, store.ErrNotFound) {
-		writeErr(w, http.StatusInternalServerError, "服务器内部错误")
+		writeErr(w, http.StatusInternalServerError, "发送失败且草稿已被消费：请让 agent 重新起草")
 		return
 	}
 	s.publish(d.ChannelID, toAPI(m, chName, false))
