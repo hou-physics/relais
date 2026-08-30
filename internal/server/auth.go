@@ -61,7 +61,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		Name: "relais_session", Value: token, Path: "/",
 		HttpOnly: true, Secure: true, SameSite: http.SameSiteLaxMode, MaxAge: 60 * 60 * 24 * 90,
 	})
-	writeJSON(w, http.StatusOK, api.Me{Username: u.Username, DisplayName: u.DisplayName, Avatar: u.Avatar, Key: "human"})
+	writeJSON(w, http.StatusOK, api.Me{Username: u.Username, DisplayName: u.DisplayName, Avatar: u.Avatar, Key: "human", IsAdmin: u.IsAdmin})
 }
 
 func (s *Server) handleMe(w http.ResponseWriter, _ *http.Request, p principal) {
@@ -69,5 +69,19 @@ func (s *Server) handleMe(w http.ResponseWriter, _ *http.Request, p principal) {
 	if p.agent {
 		key = "agent"
 	}
-	writeJSON(w, http.StatusOK, api.Me{Username: p.user.Username, DisplayName: p.user.DisplayName, Avatar: p.user.Avatar, Key: key})
+	writeJSON(w, http.StatusOK, api.Me{Username: p.user.Username, DisplayName: p.user.DisplayName, Avatar: p.user.Avatar, Key: key, IsAdmin: p.user.IsAdmin})
+}
+
+func (s *Server) adminOnly(h func(http.ResponseWriter, *http.Request, principal)) func(http.ResponseWriter, *http.Request, principal) {
+	return func(w http.ResponseWriter, r *http.Request, p principal) {
+		if p.agent {
+			writeErr(w, http.StatusForbidden, "管理操作仅限网页/管理员登录（人的钥匙）")
+			return
+		}
+		if !p.user.IsAdmin {
+			writeErr(w, http.StatusForbidden, "你不是管理员")
+			return
+		}
+		h(w, r, p)
+	}
 }
