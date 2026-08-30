@@ -3,6 +3,8 @@ package store
 import (
 	"errors"
 	"path/filepath"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -494,5 +496,31 @@ func TestGuidance(t *testing.T) {
 	}
 	if g2, _ := s.PullGuidance(ch.ID, a.ID); g2 != "" {
 		t.Fatalf("取后应清空: %q", g2)
+	}
+}
+
+func TestRequestTurnConcurrency(t *testing.T) {
+	s := testStore(t)
+	ch, _ := s.CreateChannel("c")
+	const K = 5
+	s.SetAutoEnabled(ch.ID, true, K)
+	var wg sync.WaitGroup
+	var allowed int64
+	for i := 0; i < 50; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if ok, _, err := s.RequestTurn(ch.ID); err == nil && ok {
+				atomic.AddInt64(&allowed, 1)
+			}
+		}()
+	}
+	wg.Wait()
+	if allowed != K {
+		t.Fatalf("并发下恰好应放行 K=%d 次，实际 %d", K, allowed)
+	}
+	st, _ := s.GetAuto(ch.ID)
+	if st.RoundCount != K {
+		t.Fatalf("round_count 不应超过 cap: %d", st.RoundCount)
 	}
 }

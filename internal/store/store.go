@@ -801,8 +801,17 @@ func (s *Store) RequestTurn(channelID int64) (bool, string, error) {
 	if round >= cap {
 		return false, "已到检查点（等待人确认继续）", nil
 	}
-	if _, err := tx.Exec(`UPDATE channel_auto SET round_count=round_count+1 WHERE channel_id=?`, channelID); err != nil {
+	res, err := tx.Exec(`UPDATE channel_auto SET round_count=round_count+1 WHERE channel_id=? AND round_count<cap`, channelID)
+	if err != nil {
 		return false, "", err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, "", err
+	}
+	if n == 0 {
+		// 竞态下另一并发请求已用掉最后一个名额
+		return false, "已到检查点（等待人确认继续）", nil
 	}
 	if err := tx.Commit(); err != nil {
 		return false, "", err
