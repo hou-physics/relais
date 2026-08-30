@@ -62,6 +62,29 @@ func TestStaticPages(t *testing.T) {
 	}
 }
 
+// TestI18NKeysForAdminView 检查管理界面所需的 i18n 键存在。
+func TestI18NKeysForAdminView(t *testing.T) {
+	ts, _, _ := newTestServer(t)
+	resp, _ := http.Get(ts.URL + "/app.js")
+	body, _ := io.ReadAll(resp.Body)
+	appJS := string(body)
+
+	// 检查三语键存在（zh/en/de 各一份）
+	keys := []string{"channelAdmin", "createChannel", "newChannelPh", "members",
+		"addMember", "addMemberPh", "genInvite", "remove"}
+
+	for _, key := range keys {
+		if !strings.Contains(appJS, key+":") {
+			t.Fatalf("I18N 缺少键: %q", key)
+		}
+	}
+
+	// 检查 localeFor 函数存在
+	if !strings.Contains(appJS, "function localeFor") {
+		t.Fatal("/app.js 缺少 localeFor 函数")
+	}
+}
+
 // TestAITemplateStaysInSyncAcrossFiles 钉住 app.js 和 join.html 里各自内嵌的
 // "AI 生成消息" 格式模板，防止两份重复拷贝悄悄跑偏（发消息主页 vs. 邀请加入页
 // 各自维护一份同样的模板文本）。

@@ -10,7 +10,7 @@
 <div class="steps">
   <div class="card">
     <h1 data-i18n="title">你被邀请加入 Relais</h1>
-    <p id="invite-target" class="muted" data-i18n="checking">正在检查邀请……</p>
+    <p id="invite-target" class="muted" data-i18n="checking">正在检查邀请......</p>
     <div id="step1">
       <h2 data-i18n="step1">第 1 步 · 创建账号</h2>
       <label><span data-i18n="uname">用户名（小写字母开头，仅小写/数字/横线）</span> <input id="j-user"></label>
@@ -29,13 +29,13 @@
     <p data-i18n="initHint">再进入你们的项目文件夹，运行：</p>
     <pre id="init-cmd"></pre>
     <details>
-      <summary>Windows 用户：让系统认得 relais 命令（点开）</summary>
-      <p>下载的是 relais-windows-amd64.exe。在 PowerShell 里粘贴运行这一段（放好、改名、解锁、加入 PATH）：</p>
+      <summary data-i18n="winTab">Windows 用户：让系统认得 relais 命令（点开）</summary>
+      <p data-i18n="winHint">下载的是 relais-windows-amd64.exe。在 PowerShell 里粘贴运行这一段（放好、改名、解锁、加入 PATH）：</p>
       <pre>New-Item -ItemType Directory -Force "$HOME\relais-bin" | Out-Null
 Move-Item "$HOME\Downloads\relais-windows-amd64.exe" "$HOME\relais-bin\relais.exe" -Force
 Unblock-File "$HOME\relais-bin\relais.exe"
 [Environment]::SetEnvironmentVariable("Path", [Environment]::GetEnvironmentVariable("Path","User") + ";$HOME\relais-bin", "User")</pre>
-      <p><b>然后关掉 PowerShell 窗口、重新打开一个</b>，再运行上面的 relais login 命令。</p>
+      <p data-i18n="winClose"><b>然后关掉 PowerShell 窗口、重新打开一个</b>，再运行上面的 relais login 命令。</p>
     </details>
   </div>
   <div class="card" id="step3" hidden>
@@ -47,7 +47,7 @@ Unblock-File "$HOME\relais-bin\relais.exe"
     </details>
     <details>
       <summary data-i18n="noCliTab">我不用命令行（网页版 ChatGPT 等聊天 AI）</summary>
-      <p data-i18n="noCliHint">把下面的格式模板发给你的 AI，让它按格式生成消息文件；生成后整段复制（或存成 .md 文件），拖进 Relais 网页的发送框——摘要会自动填好。</p>
+      <p data-i18n="noCliHint">把下面的格式模板发给你的 AI，让它按格式生成消息文件；生成后整段复制（或存成 .md 文件），拖进 Relais 网页的发送框--摘要会自动填好。</p>
       <pre id="tpl"></pre>
       <p data-i18n="customInstrNote">把模板粘进 ChatGPT 的自定义指令一次即可，之后整场对话格式自动统一。</p>
     </details>
@@ -57,7 +57,7 @@ Unblock-File "$HOME\relais-bin\relais.exe"
 <script>
 "use strict";
 const J18N = {
-  zh: { title: "你被邀请加入 Relais", checking: "正在检查邀请……",
+  zh: { title: "你被邀请加入 Relais", checking: "正在检查邀请......",
     invalid: "邀请链接无效或已过期，请让邀请人重新生成。",
     step1: "第 1 步 · 创建账号", uname: "用户名（小写字母开头，仅小写/数字/横线）",
     dname: "显示名（给同伴看的名字）", pw: "密码（至少 8 位）", create: "创建账号并加入",
@@ -68,51 +68,60 @@ const J18N = {
     step3: "第 3 步 · 接上你的 AI", cliTab: "我用命令行 agent（Claude Code / Codex / Kimi CLI）",
     cliHint: "把下面这段说明贴进你 agent 的配置文件（如 AGENTS.md / CLAUDE.md）：",
     noCliTab: "我不用命令行（网页版 ChatGPT 等聊天 AI）",
-    noCliHint: "把下面的格式模板发给你的 AI，让它按格式生成消息文件；生成后整段复制（或存成 .md 文件），拖进 Relais 网页的发送框——摘要会自动填好。",
+    noCliHint: "把下面的格式模板发给你的 AI，让它按格式生成消息文件；生成后整段复制（或存成 .md 文件），拖进 Relais 网页的发送框--摘要会自动填好。",
     customInstrNote: "把模板粘进 ChatGPT 的自定义指令一次即可，之后整场对话格式自动统一。",
+    winTab: "Windows 用户：让系统认得 relais 命令（点开）",
+    winHint: "下载的是 relais-windows-amd64.exe。在 PowerShell 里粘贴运行这一段（放好、改名、解锁、加入 PATH）：",
+    winClose: "然后关掉 PowerShell 窗口、重新打开一个，再运行上面的 relais login 命令。",
     done: "完成！打开 Relais 网页用刚才的用户名密码登录。",
     pwa: "小提示：浏览器菜单里选「安装应用」，Relais 就会像独立软件一样出现在任务栏/程序坞。",
     joinTarget: "加入后你将进入频道「{channel}」。",
     joinNoChannel: "创建账号后，请让邀请人把你加进频道。",
     noDownloads: "（服务器暂未上传安装包，向邀请人索要 relais 程序文件即可）",
     channelPlaceholder: "<频道名>" },
-  en: { title: "You are invited to Relais", checking: "Checking invite…",
-    invalid: "This invite link is invalid or expired — ask for a new one.",
+  en: { title: "You are invited to Relais", checking: "Checking invite...",
+    invalid: "This invite link is invalid or expired - ask for a new one.",
     step1: "Step 1 · Create your account", uname: "Username (lowercase letter first; a-z, 0-9, dash)",
     dname: "Display name (shown to teammates)", pw: "Password (min. 8 chars)", create: "Create account & join",
     step2: "Step 2 · Install the CLI tool (your agent uses it to send/receive)",
     dlHint: "Download and put it anywhere (no installation, not even a double-click needed on Windows):",
-    loginHint: "Then open a terminal and paste this one line (it contains your personal key — don't share it):",
+    loginHint: "Then open a terminal and paste this one line (it contains your personal key - don't share it):",
     initHint: "Then, inside your project folder, run:",
     step3: "Step 3 · Connect your AI", cliTab: "I use a CLI agent (Claude Code / Codex / Kimi CLI)",
     cliHint: "Paste the following into your agent's config file (AGENTS.md / CLAUDE.md):",
     noCliTab: "I don't use a CLI (web ChatGPT etc.)",
-    noCliHint: "Send the template below to your AI so it generates messages in the right format; then copy the result (or save as .md) and drop it into the Relais composer — the summary fills itself.",
+    noCliHint: "Send the template below to your AI so it generates messages in the right format; then copy the result (or save as .md) and drop it into the Relais composer - the summary fills itself.",
     customInstrNote: "Paste the template into ChatGPT's Custom instructions once; then message format stays consistent throughout the conversation.",
+    winTab: "Windows users: teach your system the relais command (expand)",
+    winHint: "You've downloaded relais-windows-amd64.exe. Paste this into PowerShell (download, rename, unlock, add to PATH):",
+    winClose: "Then close that PowerShell window, open a new one, and paste the relais login command above.",
     done: "Done! Open the Relais page and sign in with your new credentials.",
-    pwa: "Tip: use your browser's “Install app” to get Relais as a standalone window.",
-    joinTarget: "After joining you'll enter the channel “{channel}”.",
+    pwa: "Tip: use your browser's Install app to get Relais as a standalone window.",
+    joinTarget: "After joining you'll enter the channel {channel}.",
     joinNoChannel: "After creating your account, ask the inviter to add you to a channel.",
-    noDownloads: "(No installers uploaded yet — ask the inviter for the relais binary.)",
+    noDownloads: "(No installers uploaded yet - ask the inviter for the relais binary.)",
     channelPlaceholder: "<channel>" },
-  de: { title: "Du bist zu Relais eingeladen", checking: "Einladung wird geprüft…",
-    invalid: "Dieser Einladungslink ist ungültig oder abgelaufen — bitte um einen neuen.",
+  de: { title: "Du bist zu Relais eingeladen", checking: "Einladung wird geprüft...",
+    invalid: "Dieser Einladungslink ist ungültig oder abgelaufen - bitte um einen neuen.",
     step1: "Schritt 1 · Konto anlegen", uname: "Benutzername (Kleinbuchstabe zuerst; a-z, 0-9, Bindestrich)",
     dname: "Anzeigename (für dein Team sichtbar)", pw: "Passwort (mind. 8 Zeichen)", create: "Konto anlegen & beitreten",
     step2: "Schritt 2 · CLI-Tool installieren (dein Agent sendet/empfängt damit)",
     dlHint: "Herunterladen und irgendwo ablegen (keine Installation nötig):",
-    loginHint: "Dann ein Terminal öffnen und diese Zeile einfügen (enthält deinen persönlichen Schlüssel — nicht weitergeben):",
+    loginHint: "Dann ein Terminal öffnen und diese Zeile einfügen (enthält deinen persönlichen Schlüssel - nicht weitergeben):",
     initHint: "Danach im Projektordner ausführen:",
     step3: "Schritt 3 · Deine KI anschließen", cliTab: "Ich nutze einen CLI-Agent (Claude Code / Codex / Kimi CLI)",
     cliHint: "Folgendes in die Konfigurationsdatei deines Agents einfügen (AGENTS.md / CLAUDE.md):",
     noCliTab: "Ich nutze kein CLI (Web-ChatGPT o. ä.)",
-    noCliHint: "Schick deiner KI die Vorlage unten, damit sie Nachrichten im richtigen Format erzeugt; das Ergebnis kopieren (oder als .md speichern) und in das Relais-Eingabefeld ziehen — die Zusammenfassung füllt sich selbst.",
-    customInstrNote: "Vorlage einmal in ChatGPTs Benutzerdefinierte Anweisungen einfuegen; dann bleibt das Nachrichtenformat im gesamten Gespraech konsistent.",
+    noCliHint: "Schick deiner KI die Vorlage unten, damit sie Nachrichten im richtigen Format erzeugt; das Ergebnis kopieren (oder als .md speichern) und in das Relais-Eingabefeld ziehen - die Zusammenfassung füllt sich selbst.",
+    customInstrNote: "Vorlage einmal in ChatGPTs Benutzerdefinierte Anweisungen einfügen; dann bleibt das Nachrichtenformat im gesamten Gespräch konsistent.",
+    winTab: "Windows-Benutzer: relais-Befehl zum System hinzufügen (aufklappen)",
+    winHint: "Du hast relais-windows-amd64.exe heruntergeladen. Kopier das in PowerShell (Datei ablegen, umbenennen, entsperren, zu PATH hinzufügen):",
+    winClose: "Dann das PowerShell-Fenster schließen, ein neues öffnen und den relais-login-Befehl oben einfügen.",
     done: "Fertig! Öffne die Relais-Seite und melde dich an.",
-    pwa: "Tipp: Über „App installieren” im Browser wird Relais ein eigenständiges Fenster.",
-    joinTarget: "Nach dem Beitritt kommst du in den Kanal „{channel}“.",
+    pwa: "Tipp: Über App installieren im Browser wird Relais ein eigenständiges Fenster.",
+    joinTarget: "Nach dem Beitritt kommst du in den Kanal {channel}.",
     joinNoChannel: "Nach dem Anlegen des Kontos bitte den Einladenden, dich einem Kanal hinzuzufügen.",
-    noDownloads: "(Noch keine Installationsdateien hochgeladen — frag den Einladenden nach der relais-Datei.)",
+    noDownloads: "(Noch keine Installationsdateien hochgeladen - frag den Einladenden nach der relais-Datei.)",
     channelPlaceholder: "<Kanal>" },
 };
 function detectLang() {

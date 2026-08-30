@@ -7,7 +7,7 @@ const I18N = {
   zh: {
     tagline: "agent 之间的信使 · 人在回路", username: "用户名", password: "密码", login: "登录",
     settings: "个人设置", logout: "退出登录", send: "发送", importFile: "导入 Markdown 文件",
-    copyTpl: "复制 AI 格式模板", summaryPh: "摘要（给人看的一两句话，必填）",
+    copyTpl: "复制 ChatGPT 协议模板", summaryPh: "摘要（给人看的一两句话，必填）",
     bodyPh: "正文 Markdown（给对方 agent 看的完整内容，可留空；可直接把 .md 文件拖进这里）",
     displayName: "显示名", avatarEmoji: "头像（一个 emoji，留空用首字母）", save: "保存",
     changePw: "修改密码", oldPw: "旧密码", newPw: "新密码（至少 8 位）",
@@ -18,11 +18,14 @@ const I18N = {
     markRead: "标记已读", copied: "已复制 ✓", copyFail: "复制失败：请检查浏览器剪贴板权限", draft: "草稿", del: "删除",
     soloHint: "频道里目前只有你自己——用邀请链接把同伴拉进来后，这里会出现收件人。",
     recipients: "收件人：", noBody: "（无正文）", unreadPrefix: "未读",
+    channelAdmin: "频道管理", createChannel: "新建频道", newChannelPh: "新频道名（小写字母开头）",
+    members: "成员", addMember: "添加成员", addMemberPh: "已注册用户名", genInvite: "生成邀请链接",
+    remove: "移除",
   },
   en: {
     tagline: "Messenger between agents · human in the loop", username: "Username", password: "Password", login: "Sign in",
     settings: "Settings", logout: "Sign out", send: "Send", importFile: "Import Markdown file",
-    copyTpl: "Copy AI template", summaryPh: "Summary (one or two sentences for humans, required)",
+    copyTpl: "Copy ChatGPT protocol", summaryPh: "Summary (one or two sentences for humans, required)",
     bodyPh: "Markdown body (full content for the other agent; optional; drag a .md file here)",
     displayName: "Display name", avatarEmoji: "Avatar (one emoji; empty = initial)", save: "Save",
     changePw: "Change password", oldPw: "Old password", newPw: "New password (min. 8 chars)",
@@ -33,11 +36,14 @@ const I18N = {
     markRead: "Mark read", copied: "Copied ✓", copyFail: "Copy failed — check the browser's clipboard permission", draft: "DRAFT", del: "Delete",
     soloHint: "You are the only member so far — invite your partner and recipients will appear here.",
     recipients: "To: ", noBody: "(no body)", unreadPrefix: "Unread",
+    channelAdmin: "Channel admin", createChannel: "Create channel", newChannelPh: "New channel name (lowercase start)",
+    members: "Members", addMember: "Add member", addMemberPh: "Registered username", genInvite: "Generate invite link",
+    remove: "Remove",
   },
   de: {
     tagline: "Bote zwischen Agents · Mensch in der Schleife", username: "Benutzername", password: "Passwort", login: "Anmelden",
     settings: "Einstellungen", logout: "Abmelden", send: "Senden", importFile: "Markdown-Datei importieren",
-    copyTpl: "KI-Vorlage kopieren", summaryPh: "Zusammenfassung (ein bis zwei Sätze für Menschen, Pflicht)",
+    copyTpl: "ChatGPT-Protokoll kopieren", summaryPh: "Zusammenfassung (ein bis zwei Sätze für Menschen, Pflicht)",
     bodyPh: "Markdown-Inhalt (vollständiger Text für den anderen Agent; optional; .md-Datei hierher ziehen)",
     displayName: "Anzeigename", avatarEmoji: "Avatar (ein Emoji; leer = Initiale)", save: "Speichern",
     changePw: "Passwort ändern", oldPw: "Altes Passwort", newPw: "Neues Passwort (mind. 8 Zeichen)",
@@ -48,6 +54,9 @@ const I18N = {
     markRead: "Als gelesen markieren", copied: "Kopiert ✓", copyFail: "Kopieren fehlgeschlagen — Zwischenablage-Berechtigung im Browser prüfen", draft: "ENTWURF", del: "Löschen",
     soloHint: "Du bist bisher das einzige Mitglied — lade deine Partnerin ein, dann erscheinen hier Empfänger.",
     recipients: "An: ", noBody: "(kein Inhalt)", unreadPrefix: "Ungelesen",
+    channelAdmin: "Kanalverwaltung", createChannel: "Kanal erstellen", newChannelPh: "Kanalname (Kleinbuchstabe zuerst)",
+    members: "Mitglieder", addMember: "Mitglied hinzufügen", addMemberPh: "Registrierter Benutzername", genInvite: "Einladungslink erzeugen",
+    remove: "Entfernen",
   },
 };
 function detectLang() {
@@ -67,6 +76,7 @@ function applyI18n() {
   document.querySelectorAll("[data-i18n-placeholder]").forEach((el) => { el.placeholder = t(el.dataset.i18nPlaceholder); });
   document.documentElement.lang = lang === "zh" ? "zh-CN" : lang;
 }
+function localeFor(l) { return l === "zh" ? "zh-CN" : l === "de" ? "de-DE" : "en-US"; }
 
 async function api(path, opts = {}) {
   const resp = await fetch(path, { headers: { "Content-Type": "application/json" }, ...opts });
@@ -287,6 +297,7 @@ async function openChannel(name) {
 
 function renderToRow() {
   const row = $("to-row");
+  const prevChecked = new Set([...row.querySelectorAll("input:checked")].map((c) => c.value));
   row.innerHTML = "";
   const others = members.filter((m) => m.username !== me.username);
   const sendBtn = document.querySelector("#composer button[type=submit]");
@@ -302,7 +313,7 @@ function renderToRow() {
     label.style.flexDirection = "row";
     const cb = document.createElement("input");
     cb.type = "checkbox"; cb.value = m.username;
-    cb.checked = others.length === 1; // 双人频道默认对方
+    cb.checked = prevChecked.size ? prevChecked.has(m.username) : (others.length === 1);
     label.append(cb, avatarNode(m.username, m.display_name, m.avatar || ""), " " + m.display_name);
     row.appendChild(label);
   }
@@ -331,7 +342,7 @@ function renderMsg(m) {
   head.prepend(avatarNode(m.from, m.from_display, m.from_avatar || ""));
   head.querySelector(".from").textContent = m.from_display;
   head.querySelector(".to").textContent = "→ " + m.to.join(", ");
-  head.querySelector("time").textContent = new Date(m.created_at).toLocaleString("zh-CN");
+  head.querySelector("time").textContent = new Date(m.created_at).toLocaleString(localeFor(lang));
   div.append(head);
   if (m.in_reply_to) {
     const replyBtn = document.createElement("button");
