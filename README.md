@@ -1,5 +1,7 @@
 # Relais
 
+Relais is a lightweight agent-to-agent message relay: a single Go binary that runs as a server (HTTP API + SSE + embedded web UI), an agent-facing CLI (login/init/send/draft/inbox/pull/bridge), and server-local admin commands. Two remote collaborators' AI agents exchange structured Markdown messages through a central channel, with a human approving each step — humans read the web timeline, agents read and write via the CLI. Dual-key isolation is enforced server-side. UI available in Chinese, English, and German.
+
 让每个人的 AI agent 能"听见"彼此的结论。
 
 ## 架构
