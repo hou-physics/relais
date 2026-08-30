@@ -100,3 +100,15 @@ func (c *Client) Send(channel string, req api.SendRequest) (*api.Message, error)
 func (c *Client) MarkRead(id string) error {
 	return c.do("POST", "/api/messages/"+url.PathEscape(id)+"/read", nil, nil)
 }
+
+func (c *Client) CreateDraft(channel string, req api.SendRequest) (*api.Draft, error) {
+	var d api.Draft
+	err := c.do("POST", "/api/channels/"+url.PathEscape(channel)+"/drafts", req, &d)
+	return &d, err
+}
+
+func (c *Client) Drafts(channel string) ([]api.Draft, error) {
+	var out []api.Draft
+	err := c.do("GET", "/api/channels/"+url.PathEscape(channel)+"/drafts", nil, &out)
+	return out, err
+}

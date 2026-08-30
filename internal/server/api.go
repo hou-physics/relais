@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"strings"
 
 	"github.com/hou-physics/relais/internal/api"
 	"github.com/hou-physics/relais/internal/store"
@@ -12,7 +11,7 @@ import (
 
 func toAPI(m *store.Message, channelName string, withBody bool) api.Message {
 	out := api.Message{
-		ID: m.ID, Channel: channelName, From: m.Sender, FromDisplay: m.SenderDisplay,
+		ID: m.ID, Channel: channelName, From: m.Sender, FromDisplay: m.SenderDisplay, FromAvatar: m.SenderAvatar,
 		To: m.To, Summary: m.Summary, InReplyTo: m.InReplyTo, CreatedAt: m.CreatedAt, Unread: m.Unread,
 	}
 	if withBody {
@@ -73,7 +72,7 @@ func (s *Server) handleMembers(w http.ResponseWriter, r *http.Request, p princip
 	}
 	out := make([]api.Member, 0, len(ms))
 	for _, m := range ms {
-		out = append(out, api.Member{Username: m.Username, DisplayName: m.DisplayName})
+		out = append(out, api.Member{Username: m.Username, DisplayName: m.DisplayName, Avatar: m.Avatar})
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -106,37 +105,8 @@ func (s *Server) handleSend(w http.ResponseWriter, r *http.Request, p principal)
 		writeErr(w, http.StatusBadRequest, "请求格式不对")
 		return
 	}
-	if strings.TrimSpace(req.Summary) == "" {
-		writeErr(w, http.StatusBadRequest, "摘要（summary）必填：给人看的一两句话")
-		return
-	}
-	members, err := s.st.ListMembers(ch.ID)
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "服务器内部错误")
-		return
-	}
-	byName := map[string]int64{}
-	names := []string{}
-	for _, m := range members {
-		byName[m.Username] = m.ID
-		names = append(names, m.Username)
-	}
-	var toIDs []int64
-	seen := map[int64]bool{}
-	for _, name := range req.To {
-		id, ok := byName[name]
-		if !ok {
-			writeErr(w, http.StatusBadRequest, "收件人 %q 不是频道成员；有效成员：%s", name, strings.Join(names, ", "))
-			return
-		}
-		if seen[id] {
-			continue
-		}
-		seen[id] = true
-		toIDs = append(toIDs, id)
-	}
-	if len(toIDs) == 0 {
-		writeErr(w, http.StatusBadRequest, "收件人不能为空；有效成员：%s", strings.Join(names, ", "))
+	_, toIDs, ok := s.validateOutgoing(w, ch, &req)
+	if !ok {
 		return
 	}
 	m, err := s.st.SaveMessage(ch.ID, p.user.ID, toIDs, req.Summary, req.Body, req.InReplyTo)
