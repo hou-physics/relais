@@ -61,3 +61,21 @@
 
 - 全部 M1 锚点不变绿 + 新增：草稿仅作者可见（他人 agent/人两把钥匙均 404/403）、draft→send 转正走 SSE、frontmatter 摘要在 CLI 与网页两侧生效、密码修改后旧 session 仍有效但旧密码失效、token 重置后旧 token 401。
 - 生产部署后浏览器全流程冒烟 + bridge 在本机真实跑通一次（通知可见）。
+
+---
+
+## 5. 增补（Hou 睡前追加，2026-08-30 深夜）
+
+### 5.1 网页来消息通知
+- SSE 收到新消息时，若页面不在前台（`document.hidden`）且浏览器通知权限已授予，发浏览器通知（标题=发件人显示名，正文=摘要，点击聚焦页面）。设置页提供"启用桌面通知"按钮触发权限请求；权限被拒则该按钮显示状态并不再打扰。
+
+### 5.2 网页三语言（zh/en/de）
+- 全部界面文案抽入词典（zh/en/de 三份），默认跟随 `navigator.language`（zh* → zh；de* → de；其余 → en），header 提供语言切换（下拉：中文/English/Deutsch），选择存 localStorage 覆盖系统默认。join 向导同样三语。CLI 输出保持中文（M2 不做 CLI i18n，见 D20）。
+
+### 5.3 项目注册表与多项目 bridge
+- `relais init` 成功后把 `{channel, 绝对路径}` 写入全局注册表 `<配置目录>/projects.toml`（同 channel 重复 init 覆盖路径）。
+- `relais bridge` 不再要求在项目目录内运行：读注册表轮询**全部**已注册频道，各自消息落到各自项目的 relais/inbox/（注册表为空时退回 cwd 的 findProject 行为）。hook 环境变量增加 `RELAIS_MSG_DIR`（该项目根）。
+- 这就是"本地 PhiNeuro 文件夹自动接入"的机制：文件夹 init 一次即注册，bridge 一个进程守全部项目；网页端"选择项目"即选择频道，消息天然落到对应本地文件夹。
+
+### 5.4 仓库公开
+- GitHub 仓库转 public（Hou 指示）。域名出现在 spec 属可接受（证书透明日志本已公开）；密码/IP/token 永不入库。
