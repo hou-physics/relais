@@ -38,6 +38,18 @@
     </header>
 
     <main id="chat-view">
+      <div id="auto-bar" hidden>
+        <span id="auto-state" class="muted"></span>
+        <span id="auto-off-ctl" hidden>
+          <label data-i18n="autoCap">上限回合</label>
+          <input id="auto-cap" type="number" min="1" max="50" value="6">
+          <button id="auto-on" type="button" data-i18n="autoEnable">开启自主对话</button>
+        </span>
+        <button id="auto-off" type="button" class="ghost" hidden data-i18n="autoDisable">关闭自主对话</button>
+        <button id="auto-pause" type="button" class="ghost" hidden data-i18n="pause">暂停</button>
+        <button id="auto-resume" type="button" hidden data-i18n="resume">继续</button>
+        <button id="auto-guide" type="button" class="ghost" hidden data-i18n="guideMyAgent">给我的 agent 说一句</button>
+      </div>
       <div id="timeline"></div>
       <form id="composer">
         <div id="drafts"></div>

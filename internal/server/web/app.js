@@ -21,6 +21,10 @@ const I18N = {
     channelAdmin: "频道管理", createChannel: "新建频道", newChannelPh: "新频道名（小写字母开头）",
     members: "成员", addMember: "添加成员", addMemberPh: "已注册用户名", genInvite: "生成邀请链接",
     remove: "移除",
+    pause: "暂停", resume: "继续", guideMyAgent: "给我的 agent 说一句",
+    autoRunning: "自主对话中（第 {n}/{cap} 轮）", autoPaused: "已暂停", autoNeedsYou: "需要你回答：",
+    autoOff: "自主对话：未开启", autoEnable: "开启自主对话", autoDisable: "关闭自主对话", autoCap: "上限回合",
+    guidePrompt: "给你自己的 agent 一句私下引导（对方看不到）：",
   },
   en: {
     tagline: "Messenger between agents · human in the loop", username: "Username", password: "Password", login: "Sign in",
@@ -39,6 +43,10 @@ const I18N = {
     channelAdmin: "Channel admin", createChannel: "Create channel", newChannelPh: "New channel name (lowercase start)",
     members: "Members", addMember: "Add member", addMemberPh: "Registered username", genInvite: "Generate invite link",
     remove: "Remove",
+    pause: "Pause", resume: "Resume", guideMyAgent: "Tell my agent",
+    autoRunning: "Auto-chat running ({n}/{cap})", autoPaused: "Paused", autoNeedsYou: "Needs your answer:",
+    autoOff: "Auto-chat: off", autoEnable: "Enable auto-chat", autoDisable: "Disable", autoCap: "Round cap",
+    guidePrompt: "Private guidance to your own agent (the other side won't see it):",
   },
   de: {
     tagline: "Bote zwischen Agents · Mensch in der Schleife", username: "Benutzername", password: "Passwort", login: "Anmelden",
@@ -57,6 +65,10 @@ const I18N = {
     channelAdmin: "Kanalverwaltung", createChannel: "Kanal erstellen", newChannelPh: "Kanalname (Kleinbuchstabe zuerst)",
     members: "Mitglieder", addMember: "Mitglied hinzufügen", addMemberPh: "Registrierter Benutzername", genInvite: "Einladungslink erzeugen",
     remove: "Entfernen",
+    pause: "Pause", resume: "Fortsetzen", guideMyAgent: "Meinem Agent sagen",
+    autoRunning: "Auto-Chat läuft ({n}/{cap})", autoPaused: "Pausiert", autoNeedsYou: "Braucht deine Antwort:",
+    autoOff: "Auto-Chat: aus", autoEnable: "Auto-Chat aktivieren", autoDisable: "Deaktivieren", autoCap: "Rundenlimit",
+    guidePrompt: "Private Anweisung an deinen Agent (die andere Seite sieht sie nicht):",
   },
 };
 function detectLang() {
@@ -290,10 +302,56 @@ async function openChannel(name) {
   sse = new EventSource("/api/events?channel=" + encodeURIComponent(name));
   sse.onmessage = (ev) => {
     try { maybeNotify(JSON.parse(ev.data)); } catch {}
-    refresh(); loadChannels(); loadDrafts();
+    refresh(); loadChannels(); loadDrafts(); loadAutoState();
   };
   loadChannels();
+  loadAutoState();
 }
+
+async function loadAutoState() {
+  const bar = $("auto-bar");
+  let st;
+  try { st = await api("/api/channels/" + encodeURIComponent(channel) + "/auto"); }
+  catch { bar.hidden = true; return; }
+  bar.hidden = false;
+  const on = !!st.enabled;
+  if (on) $("auto-cap").value = st.cap;          // 输入框同步真实 cap
+  $("auto-off-ctl").hidden = on;                  // 开启控件仅在 auto 关时显示
+  $("auto-off").hidden = !on;                     // 关闭按钮仅在 auto 开时显示
+  $("auto-guide").hidden = !on;
+  $("auto-pause").hidden = !on || st.paused;
+  $("auto-resume").hidden = !on || !st.paused;
+  if (!on) { $("auto-state").textContent = t("autoOff"); $("auto-state").className = "muted"; return; }
+  let text = t("autoRunning").replace("{n}", st.round_count).replace("{cap}", st.cap);
+  if (st.needs_human_q) text = "⚠️ " + t("autoNeedsYou") + " " + st.needs_human_q;
+  else if (st.paused) text = t("autoPaused");
+  $("auto-state").textContent = text;
+  $("auto-state").className = (st.needs_human_q || st.paused) ? "err" : "muted";
+}
+
+$("auto-on").addEventListener("click", async () => {
+  const cap = parseInt($("auto-cap").value, 10) || 6;
+  await api("/api/channels/" + encodeURIComponent(channel) + "/auto", { method: "POST", body: JSON.stringify({ enabled: true, cap }) });
+  loadAutoState();
+});
+$("auto-off").addEventListener("click", async () => {
+  const cap = parseInt($("auto-cap").value, 10) || 6;
+  await api("/api/channels/" + encodeURIComponent(channel) + "/auto", { method: "POST", body: JSON.stringify({ enabled: false, cap }) });
+  loadAutoState();
+});
+$("auto-pause").addEventListener("click", async () => {
+  await api("/api/channels/" + encodeURIComponent(channel) + "/auto/pause", { method: "POST" });
+  loadAutoState();
+});
+$("auto-resume").addEventListener("click", async () => {
+  await api("/api/channels/" + encodeURIComponent(channel) + "/auto/resume", { method: "POST" });
+  loadAutoState();
+});
+$("auto-guide").addEventListener("click", async () => {
+  const note = prompt(t("guidePrompt"));
+  if (note == null || note.trim() === "") return;
+  await api("/api/channels/" + encodeURIComponent(channel) + "/guidance", { method: "POST", body: JSON.stringify({ note: note.trim() }) });
+});
 
 function renderToRow() {
   const row = $("to-row");

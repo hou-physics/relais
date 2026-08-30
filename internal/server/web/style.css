@@ -101,3 +101,7 @@ main { max-width: 720px; margin: 0 auto; padding: 20px 16px 0; display: flex; fl
 
 #admin-channels .toggle { font-size: 14px; }
 #invite-out { user-select: all; }
+
+#auto-bar { display: flex; align-items: center; gap: 10px; padding: 8px 12px;
+  background: var(--card); border: 1px solid var(--line); border-radius: 8px; flex-wrap: wrap; }
+#auto-bar input#auto-cap { width: 4em; }
