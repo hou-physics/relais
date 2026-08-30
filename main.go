@@ -18,7 +18,7 @@ func main() {
 
 func run(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("用法: relais <serve|login|init|send|inbox|pull|members|agent-guide|user|channel|invite|version>")
+		return fmt.Errorf("用法: relais <serve|login|init|send|draft|inbox|pull|members|agent-guide|user|channel|invite|bridge|version>")
 	}
 	switch args[0] {
 	case "version":
@@ -32,6 +32,8 @@ func run(args []string) error {
 		return cli.RunInit(args[1:])
 	case "send":
 		return cli.RunSend(args[1:])
+	case "draft":
+		return cli.RunDraft(args[1:])
 	case "inbox":
 		return cli.RunInbox(args[1:])
 	case "pull":

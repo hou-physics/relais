@@ -18,29 +18,36 @@ type multiFlag []string
 func (m *multiFlag) String() string     { return strings.Join(*m, ",") }
 func (m *multiFlag) Set(v string) error { *m = append(*m, v); return nil }
 
-func RunSend(args []string) error {
-	fs := flag.NewFlagSet("send", flag.ContinueOnError)
+type outgoing struct {
+	root      string
+	proj      *ProjectConfig
+	cfg       *GlobalConfig
+	client    *Client
+	req       api.SendRequest // To 已按默认收件人规则解析、Summary 已定（flag 或 frontmatter）
+	body      []byte          // 原始读入（草稿保护用）
+	fromStdin bool
+}
+
+func prepareOutgoing(args []string, verb string) (*outgoing, error) {
+	fs := flag.NewFlagSet(verb, flag.ContinueOnError)
 	var to multiFlag
 	fs.Var(&to, "to", "收件人用户名（可多次）")
 	all := fs.Bool("all", false, "发给频道内除自己外的全部成员")
 	summary := fs.String("summary", "", "给人看的摘要（必填）")
 	reply := fs.String("reply", "", "回复的消息 id")
 	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	if *summary == "" {
-		return fmt.Errorf("--summary 必填：给人看的一两句话")
+		return nil, err
 	}
 	if fs.NArg() != 1 {
-		return fmt.Errorf("用法: relais send [--to 用户名]... [--all] --summary \"...\" <正文文件|->")
+		return nil, fmt.Errorf("用法: relais %s [--to 用户名]... [--all] [--summary \"...\"] <正文文件|->", verb)
 	}
 	root, proj, err := findProject()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	c, cfg, err := newClient()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	// 读正文（文件或 stdin）
 	src := fs.Arg(0)
@@ -48,29 +55,26 @@ func RunSend(args []string) error {
 	fromStdin := src == "-"
 	if fromStdin {
 		if body, err = io.ReadAll(os.Stdin); err != nil {
-			return err
+			return nil, err
 		}
 	} else {
 		if body, err = os.ReadFile(src); err != nil {
-			return fmt.Errorf("读取正文文件失败: %w", err)
+			return nil, fmt.Errorf("读取正文文件失败: %w", err)
 		}
 	}
-	// Draft protection closure: wraps any subsequent error to save stdin if needed
-	failWithDraft := func(err error) error {
-		if !fromStdin {
-			return err
-		}
-		draft := filepath.Join(root, "relais", "drafts",
-			time.Now().UTC().Format("20060102-150405")+".md")
-		if werr := os.WriteFile(draft, body, 0o644); werr == nil {
-			return fmt.Errorf("%w（正文已保存到 %s）", err, draft)
-		}
-		return err
-	}
+
 	// 解析收件人（spec §7 默认收件人规则）
 	members, err := c.Members(proj.Channel)
 	if err != nil {
-		return failWithDraft(err)
+		// Draft protection for stdin on Members failure
+		if fromStdin {
+			draft := filepath.Join(root, "relais", "drafts",
+				time.Now().UTC().Format("20060102-150405")+".md")
+			if werr := os.WriteFile(draft, body, 0o644); werr == nil {
+				return nil, fmt.Errorf("%w（正文已保存到 %s）", err, draft)
+			}
+		}
+		return nil, err
 	}
 	var others []string
 	for _, m := range members {
@@ -86,21 +90,60 @@ func RunSend(args []string) error {
 		if len(others) == 1 {
 			recipients = others // 双人频道：默认对方
 		} else {
-			return fmt.Errorf("频道 %q 有 %d 名成员，请用 --to 指定收件人（成员：%s）或 --all 发全体",
+			return nil, fmt.Errorf("频道 %q 有 %d 名成员，请用 --to 指定收件人（成员：%s）或 --all 发全体",
 				proj.Channel, len(members), strings.Join(others, ", "))
 		}
 	}
-	sent, err := c.Send(proj.Channel, api.SendRequest{
-		To: recipients, Summary: *summary, Body: string(body), InReplyTo: *reply,
-	})
+
+	// 处理摘要（flag 优先于 frontmatter）
+	summaryVal := *summary
+	bodyStr := string(body)
+	if summaryVal == "" {
+		if fmSummary, fmBody, ok := msg.ExtractSummary(body); ok {
+			summaryVal = fmSummary
+			bodyStr = fmBody
+		} else {
+			return nil, fmt.Errorf("--summary 必填（或在文件头 frontmatter 写 summary: 字段）：给人看的一两句话")
+		}
+	}
+
+	return &outgoing{
+		root:      root,
+		proj:      proj,
+		cfg:       cfg,
+		client:    c,
+		req:       api.SendRequest{To: recipients, Summary: summaryVal, Body: bodyStr, InReplyTo: *reply},
+		body:      body,
+		fromStdin: fromStdin,
+	}, nil
+}
+
+func RunSend(args []string) error {
+	o, err := prepareOutgoing(args, "send")
+	if err != nil {
+		return err
+	}
+	// Draft protection closure: wraps any subsequent error to save stdin if needed
+	failWithDraft := func(err error) error {
+		if !o.fromStdin {
+			return err
+		}
+		draft := filepath.Join(o.root, "relais", "drafts",
+			time.Now().UTC().Format("20060102-150405")+".md")
+		if werr := os.WriteFile(draft, o.body, 0o644); werr == nil {
+			return fmt.Errorf("%w（正文已保存到 %s）", err, draft)
+		}
+		return err
+	}
+	sent, err := o.client.Send(o.proj.Channel, o.req)
 	if err != nil {
 		return failWithDraft(fmt.Errorf("发送失败: %w", err))
 	}
 	// sent/ 副本（本地快照；事实源在服务器）
-	copyPath := filepath.Join(root, "relais", "sent", localName(sent.ID, sent.CreatedAt, cfg.Username))
+	copyPath := filepath.Join(o.root, "relais", "sent", localName(sent.ID, sent.CreatedAt, o.cfg.Username))
 	env := msg.Envelope{ID: sent.ID, Channel: sent.Channel, From: sent.From, To: sent.To,
 		InReplyTo: sent.InReplyTo, Sent: sent.CreatedAt, Summary: sent.Summary}
-	if werr := os.WriteFile(copyPath, msg.Render(env, string(body)), 0o644); werr != nil {
+	if werr := os.WriteFile(copyPath, msg.Render(env, o.req.Body), 0o644); werr != nil {
 		fmt.Printf("已发送 → %s（频道 %s，id %s）\n", strings.Join(sent.To, ", "), sent.Channel, sent.ID)
 		fmt.Printf("警告：本地副本写入失败: %v\n", werr)
 	} else {

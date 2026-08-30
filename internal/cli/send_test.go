@@ -122,3 +122,36 @@ func TestSendStdinDraftOnMembersFailure(t *testing.T) {
 		t.Fatalf("Members 失败后 stdin 正文应存草稿: %v", drafts)
 	}
 }
+
+func TestSendFrontmatterSummary(t *testing.T) {
+	st, users, proj := setupCLITest(t, "hou", "duo")
+	md := filepath.Join(proj, "note.md")
+	os.WriteFile(md, []byte("---\nsummary: 文件头里的摘要\n---\n\n# 正文\n内容"), 0o644)
+	if err := RunSend([]string{md}); err != nil { // 不带 --summary
+		t.Fatal(err)
+	}
+	ch, _ := st.ChannelByName("duo")
+	msgs, _ := st.ListEnvelopes(ch.ID, users["wu"].ID, true, true)
+	if len(msgs) != 1 || msgs[0].Summary != "文件头里的摘要" {
+		t.Fatalf("摘要应取自 frontmatter: %+v", msgs)
+	}
+	got, _ := st.GetMessage(msgs[0].ID, users["wu"].ID, true)
+	if got.Body != "# 正文\n内容" {
+		t.Fatalf("正文不应含 frontmatter: %q", got.Body)
+	}
+	// --summary 显式给出时优先，正文保留原样（不剥头）
+	os.WriteFile(md, []byte("---\nsummary: 会被覆盖\n---\n\nB"), 0o644)
+	if err := RunSend([]string{"--summary", "显式摘要", md}); err != nil {
+		t.Fatal(err)
+	}
+	msgs, _ = st.ListEnvelopes(ch.ID, users["wu"].ID, true, true)
+	last := msgs[len(msgs)-1]
+	if last.Summary != "显式摘要" {
+		t.Fatalf("显式 --summary 应优先: %+v", last)
+	}
+	// 两者皆无 → 报错提示 --summary
+	os.WriteFile(md, []byte("纯文本无头"), 0o644)
+	if err := RunSend([]string{md}); err == nil || !strings.Contains(err.Error(), "--summary") {
+		t.Fatalf("无摘要来源应报错: %v", err)
+	}
+}
