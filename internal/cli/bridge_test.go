@@ -75,3 +75,32 @@ func TestPollOnceLandsNotifiesAndHooks(t *testing.T) {
 		t.Fatalf("第二轮应 0: %d %v", landed, err)
 	}
 }
+
+func TestNotifyCommandHasNoContentInjection(t *testing.T) {
+	// Payload containing shell metacharacters that could break out of string interpolation
+	from := `' $(id) `
+	summary := `' "whoami" ` + "`ps`"
+
+	cmd := notifyCmd(from, summary)
+
+	// Verify that neither from nor summary appear in cmd.Args
+	for _, arg := range cmd.Args {
+		if strings.Contains(arg, from) || strings.Contains(arg, summary) ||
+			strings.Contains(arg, "$(id)") || strings.Contains(arg, "whoami") ||
+			strings.Contains(arg, "`ps`") {
+			t.Fatalf("Message content leaked into cmd.Args: %v", cmd.Args)
+		}
+	}
+
+	// Verify content is in env vars only
+	foundInEnv := false
+	for _, env := range cmd.Env {
+		if strings.HasPrefix(env, "RELAIS_NT_SUMMARY=") || strings.HasPrefix(env, "RELAIS_NT_TITLE=") {
+			foundInEnv = true
+			break
+		}
+	}
+	if !foundInEnv {
+		t.Fatalf("Message content not found in cmd.Env")
+	}
+}

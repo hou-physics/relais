@@ -16,20 +16,28 @@ type bridgeTarget struct {
 	Dir     string
 }
 
-func notifyDesktop(from, summary string) {
+func notifyCmd(from, summary string) *exec.Cmd {
+	title := "Relais · " + from
 	var cmd *exec.Cmd
 	switch runtime.GOOS {
 	case "darwin":
-		script := fmt.Sprintf("display notification %q with title %q", summary, "Relais · "+from)
-		cmd = exec.Command("osascript", "-e", script)
+		// AppleScript reads the env vars via `system attribute`
+		cmd = exec.Command("osascript", "-e",
+			`display notification (system attribute "RELAIS_NT_SUMMARY") with title (system attribute "RELAIS_NT_TITLE")`)
 	case "windows":
-		ps := fmt.Sprintf(`[void][System.Reflection.Assembly]::LoadWithPartialName('System.Windows.Forms');`+
-			`$n=New-Object System.Windows.Forms.NotifyIcon;$n.Icon=[System.Drawing.SystemIcons]::Information;`+
-			`$n.Visible=$true;$n.ShowBalloonTip(5000,'Relais · %s','%s',[System.Windows.Forms.ToolTipIcon]::Info)`, from, summary)
-		cmd = exec.Command("powershell", "-NoProfile", "-Command", ps)
+		cmd = exec.Command("powershell", "-NoProfile", "-Command",
+			`[void][System.Reflection.Assembly]::LoadWithPartialName('System.Windows.Forms');`+
+				`$n=New-Object System.Windows.Forms.NotifyIcon;$n.Icon=[System.Drawing.SystemIcons]::Information;`+
+				`$n.Visible=$true;$n.ShowBalloonTip(5000,$env:RELAIS_NT_TITLE,$env:RELAIS_NT_SUMMARY,[System.Windows.Forms.ToolTipIcon]::Info)`)
 	default:
-		cmd = exec.Command("notify-send", "Relais · "+from, summary)
+		cmd = exec.Command("notify-send", os.Getenv("RELAIS_NT_TITLE"), os.Getenv("RELAIS_NT_SUMMARY"))
 	}
+	cmd.Env = append(os.Environ(), "RELAIS_NT_TITLE="+title, "RELAIS_NT_SUMMARY="+summary)
+	return cmd
+}
+
+func notifyDesktop(from, summary string) {
+	cmd := notifyCmd(from, summary)
 	if err := cmd.Run(); err != nil {
 		fmt.Printf("（系统通知发送失败，仅终端提示）\n")
 	}
