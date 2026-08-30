@@ -5,6 +5,14 @@
 
 ---
 
+## 2026-08-30 · D33 M5 执行期偏离（对照 spec 的两处实现选择）
+
+- **问题**：M5 落地时两处实现与 spec 文字不完全一致，需记档以免后续维护者找错地方。
+- **考虑过**：严格照 spec §3.2「发送路径服务端解析 `needs_human:` frontmatter」——被否：让 needs-human 消息先发出去再由服务器识别，等于把要问人的问题也推给了对方 agent。
+- **选择**：(1) **needs-human 由 hook 侦测** agent 输出首行 `NEEDS_HUMAN:` → 直接调专用端点 `POST /auto/needs-human`（该消息**从不发进频道**），比 spec 的发送路径解析更安全；服务端不做发送路径 frontmatter 解析。核心防失控（回合闸门）仍完全服务器托管。(2) **auto on/off 仅限网页**：CLI 只握 agent 钥匙，开关属人的操作（防 agent 擅自解锁），故删掉 Task 3 的测试后门后，`relais auto on/off` 只打印网页跳转提示，`auto status` 只读；开关走网页人 session（呼应 D30 显式开启）。(3) PullGuidance 用 `DELETE...RETURNING` 单语句原子读清。
+- **状态**：live（v0.4.0-m5）。
+- **反转触发**：若将来需要机器可读的 mode/needs_human frontmatter 字段 → 届时在发送路径加解析（现为提示词约定，见 D31）。
+
 ## 2026-08-30 · D32 M5 范围：傻瓜配置 + 自主循环，专门监督控制台拆到 M6
 
 - **问题**：M5 一次做多大。

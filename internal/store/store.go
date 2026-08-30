@@ -842,15 +842,14 @@ func (s *Store) SetGuidance(channelID, userID int64, note string) error {
 }
 
 func (s *Store) PullGuidance(channelID, userID int64) (string, error) {
+	// 单语句 DELETE ... RETURNING：读取并清空原子完成，杜绝 SELECT+DELETE 之间的
+	// 并发双读（与 RequestTurn 一样在同一处关掉竞态）。SQLite ≥3.35 支持 RETURNING。
 	var note string
-	err := s.db.QueryRow(`SELECT note FROM guidance WHERE channel_id=? AND user_id=?`, channelID, userID).Scan(&note)
+	err := s.db.QueryRow(`DELETE FROM guidance WHERE channel_id=? AND user_id=? RETURNING note`, channelID, userID).Scan(&note)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil
 	}
 	if err != nil {
-		return "", err
-	}
-	if _, err := s.db.Exec(`DELETE FROM guidance WHERE channel_id=? AND user_id=?`, channelID, userID); err != nil {
 		return "", err
 	}
 	return note, nil

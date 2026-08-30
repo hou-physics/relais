@@ -499,6 +499,30 @@ func TestGuidance(t *testing.T) {
 	}
 }
 
+// TestPullGuidanceConcurrency 锁死 PullGuidance 的原子性（DELETE...RETURNING）：
+// 一条引导被并发拉取，只能被恰好一个调用取到，不能双读。
+func TestPullGuidanceConcurrency(t *testing.T) {
+	s := testStore(t)
+	ch, _ := s.CreateChannel("c")
+	a, _ := s.CreateUser("hou", "Hou", "pw123456")
+	s.SetGuidance(ch.ID, a.ID, "只此一条")
+	var wg sync.WaitGroup
+	var got int64
+	for i := 0; i < 50; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if g, err := s.PullGuidance(ch.ID, a.ID); err == nil && g != "" {
+				atomic.AddInt64(&got, 1)
+			}
+		}()
+	}
+	wg.Wait()
+	if got != 1 {
+		t.Fatalf("并发拉取一条引导应恰好命中 1 次，实际 %d（非原子会 >1）", got)
+	}
+}
+
 func TestRequestTurnConcurrency(t *testing.T) {
 	s := testStore(t)
 	ch, _ := s.CreateChannel("c")
