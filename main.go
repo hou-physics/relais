@@ -8,7 +8,7 @@ import (
 )
 
 // 发版时与 server 包的 Version 常量同步更新。
-const version = "0.3.0-m4"
+const version = "0.4.0-m5"
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
@@ -19,7 +19,7 @@ func main() {
 
 func run(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("用法: relais <serve|login|init|send|draft|inbox|pull|members|agent-guide|user|channel|invite|bridge|admin|auto|auto-turn|needs-human|guidance-pull|version>")
+		return fmt.Errorf("用法: relais <serve|login|init|setup|send|draft|inbox|pull|members|agent-guide|user|channel|invite|bridge|admin|auto|auto-turn|needs-human|guidance-pull|version>")
 	}
 	switch args[0] {
 	case "version":
@@ -31,6 +31,8 @@ func run(args []string) error {
 		return cli.RunLogin(args[1:])
 	case "init":
 		return cli.RunInit(args[1:])
+	case "setup":
+		return cli.RunSetup(args[1:])
 	case "send":
 		return cli.RunSend(args[1:])
 	case "draft":
