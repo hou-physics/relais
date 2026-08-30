@@ -46,6 +46,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/join/{code}", s.handleJoinInfo)
 	mux.HandleFunc("POST /api/join", s.handleJoin)
 	mux.HandleFunc("GET /download/{file}", s.handleDownload)
+	mux.HandleFunc("POST /api/settings/password", s.auth(s.humanOnly(s.handlePassword)))
+	mux.HandleFunc("POST /api/settings/profile", s.auth(s.humanOnly(s.handleProfile)))
+	mux.HandleFunc("POST /api/settings/token", s.auth(s.humanOnly(s.handleToken)))
+	mux.HandleFunc("POST /api/logout", s.auth(s.humanOnly(s.handleLogout)))
 
 	sub, err := fs.Sub(webFS, "web")
 	if err != nil {

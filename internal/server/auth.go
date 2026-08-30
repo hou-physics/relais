@@ -61,7 +61,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		Name: "relais_session", Value: token, Path: "/",
 		HttpOnly: true, Secure: true, SameSite: http.SameSiteLaxMode, MaxAge: 60 * 60 * 24 * 90,
 	})
-	writeJSON(w, http.StatusOK, api.Me{Username: u.Username, DisplayName: u.DisplayName, Key: "human"})
+	writeJSON(w, http.StatusOK, api.Me{Username: u.Username, DisplayName: u.DisplayName, Avatar: u.Avatar, Key: "human"})
 }
 
 func (s *Server) handleMe(w http.ResponseWriter, _ *http.Request, p principal) {
@@ -69,5 +69,5 @@ func (s *Server) handleMe(w http.ResponseWriter, _ *http.Request, p principal) {
 	if p.agent {
 		key = "agent"
 	}
-	writeJSON(w, http.StatusOK, api.Me{Username: p.user.Username, DisplayName: p.user.DisplayName, Key: key})
+	writeJSON(w, http.StatusOK, api.Me{Username: p.user.Username, DisplayName: p.user.DisplayName, Avatar: p.user.Avatar, Key: key})
 }
