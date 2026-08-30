@@ -53,6 +53,7 @@ header { display: flex; align-items: center; gap: 16px; height: 48px; padding: 0
 
 main { max-width: 720px; margin: 0 auto; padding: 20px 16px 0; display: flex; flex-direction: column; gap: 14px; }
 #settings-view { padding-bottom: 40px; gap: 14px; }
+#admin-view { padding-bottom: 40px; gap: 14px; }
 #settings-view .card { display: flex; flex-direction: column; gap: 10px; align-items: flex-start; }
 #settings-view label { width: 100%; max-width: 320px; }
 
@@ -97,3 +98,6 @@ main { max-width: 720px; margin: 0 auto; padding: 20px 16px 0; display: flex; fl
 .steps summary { cursor: pointer; font-weight: 500; font-size: 13px; }
 .dl { display: inline-block; margin: 4px 8px 4px 0; padding: 7px 14px; background: var(--accent);
   color: #fff; border-radius: 6px; text-decoration: none; font-size: 13px; }
+
+#admin-channels .toggle { font-size: 14px; }
+#invite-out { user-select: all; }

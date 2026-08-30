@@ -31,6 +31,7 @@
       <button id="me-btn" class="avatar-btn" type="button"></button>
       <div id="user-menu" class="menu" hidden>
         <div id="menu-name" class="muted"></div>
+        <button id="menu-admin" type="button" hidden data-i18n="channelAdmin">频道管理</button>
         <button id="menu-settings" type="button" data-i18n="settings">个人设置</button>
         <button id="menu-logout" type="button" class="danger" data-i18n="logout">退出登录</button>
       </div>
@@ -79,6 +80,29 @@
         <button id="notify-btn" type="button" class="ghost" data-i18n="notifyEnable">启用桌面通知</button>
       </div>
       <button id="back-chat" type="button" data-i18n="backChat">← 返回聊天</button>
+    </main>
+
+    <main id="admin-view" hidden>
+      <div class="card">
+        <h2 data-i18n="channelAdmin">频道管理</h2>
+        <div id="admin-channels"></div>
+        <div class="row">
+          <input id="new-channel" data-i18n-placeholder="newChannelPh" placeholder="新频道名（小写字母开头）">
+          <button id="create-channel" type="button" data-i18n="createChannel">新建频道</button>
+        </div>
+        <span id="admin-msg" class="err"></span>
+      </div>
+      <div class="card" id="channel-detail" hidden>
+        <h2><span data-i18n="members">成员</span> · <span id="detail-channel"></span></h2>
+        <div id="detail-members"></div>
+        <div class="row">
+          <input id="add-member-name" data-i18n-placeholder="addMemberPh" placeholder="已注册用户名">
+          <button id="add-member" type="button" data-i18n="addMember">添加成员</button>
+          <button id="channel-invite" type="button" class="ghost" data-i18n="genInvite">生成邀请链接</button>
+        </div>
+        <pre id="invite-out" hidden></pre>
+      </div>
+      <button id="admin-back" type="button" data-i18n="backChat">← 返回聊天</button>
     </main>
   </section>
 </div>

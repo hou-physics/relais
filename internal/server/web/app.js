@@ -160,6 +160,7 @@ async function boot() {
     btn.innerHTML = "";
     btn.append(avatarNode(me.username, me.display_name, me.avatar));
     $("menu-name").textContent = me.display_name + "（" + me.username + "）";
+    $("menu-admin").hidden = !me.is_admin;
     await loadChannels();
   } catch {
     $("login-view").hidden = false;
@@ -443,6 +444,7 @@ document.addEventListener("click", (e) => {
 function showView(name) {
   $("chat-view").hidden = name !== "chat";
   $("settings-view").hidden = name !== "settings";
+  $("admin-view").hidden = name !== "admin";
   $("user-menu").hidden = true;
 }
 $("menu-settings").addEventListener("click", () => {
@@ -452,6 +454,80 @@ $("menu-settings").addEventListener("click", () => {
   updateNotifyBtn();
 });
 $("back-chat").addEventListener("click", () => showView("chat"));
+
+let adminDetailChannel = null;
+
+$("menu-admin").addEventListener("click", () => { loadAdminChannels(); showView("admin"); });
+$("admin-back").addEventListener("click", () => showView("chat"));
+
+async function loadAdminChannels() {
+  const box = $("admin-channels");
+  box.innerHTML = "";
+  let stats = [];
+  try { stats = await api("/api/admin/channels"); } catch (e) { $("admin-msg").textContent = e.message; return; }
+  for (const st of stats) {
+    const row = document.createElement("div");
+    row.className = "row";
+    const link = document.createElement("button");
+    link.className = "toggle";
+    link.textContent = st.name + "（" + st.members + "）";
+    link.onclick = () => openChannelDetail(st.name);
+    row.append(link);
+    box.append(row);
+  }
+}
+
+$("create-channel").addEventListener("click", async () => {
+  try {
+    await api("/api/admin/channels", { method: "POST", body: JSON.stringify({ name: $("new-channel").value.trim() }) });
+    $("new-channel").value = ""; $("admin-msg").textContent = "";
+    loadAdminChannels();
+  } catch (e) { $("admin-msg").textContent = e.message; }
+});
+
+async function openChannelDetail(name) {
+  adminDetailChannel = name;
+  $("channel-detail").hidden = false;
+  $("detail-channel").textContent = name;
+  $("invite-out").hidden = true;
+  await loadDetailMembers();
+}
+
+async function loadDetailMembers() {
+  const box = $("detail-members");
+  box.innerHTML = "";
+  const ms = await api("/api/admin/channels/" + encodeURIComponent(adminDetailChannel) + "/members");
+  for (const m of ms) {
+    const row = document.createElement("div");
+    row.className = "row";
+    row.append(avatarNode(m.username, m.display_name, m.avatar || ""), " " + m.display_name + "（" + m.username + "）");
+    const rm = document.createElement("button");
+    rm.className = "danger"; rm.textContent = t("remove");
+    rm.onclick = async () => {
+      await api("/api/admin/channels/" + encodeURIComponent(adminDetailChannel) + "/members/" + encodeURIComponent(m.username), { method: "DELETE" });
+      loadDetailMembers();
+    };
+    row.append(rm);
+    box.append(row);
+  }
+}
+
+$("add-member").addEventListener("click", async () => {
+  try {
+    await api("/api/admin/channels/" + encodeURIComponent(adminDetailChannel) + "/members", {
+      method: "POST", body: JSON.stringify({ username: $("add-member-name").value.trim() }) });
+    $("add-member-name").value = "";
+    loadDetailMembers();
+  } catch (e) { $("admin-msg").textContent = e.message; }
+});
+
+$("channel-invite").addEventListener("click", async () => {
+  try {
+    const out = await api("/api/admin/channels/" + encodeURIComponent(adminDetailChannel) + "/invites", { method: "POST" });
+    $("invite-out").hidden = false;
+    $("invite-out").textContent = out.url;
+  } catch (e) { $("admin-msg").textContent = e.message; }
+});
 $("menu-logout").addEventListener("click", async () => {
   try { await api("/api/logout", { method: "POST" }); } catch {}
   location.reload();
