@@ -26,16 +26,15 @@ sudo relais admin grant hou_physics --config /etc/relais/server.toml
 
 **Web 网页管理**：管理员登录后，网页顶部出现「频道管理」按钮，可查看全部频道、添加/移除成员。
 
-**CLI 后台命令**（需装在服务器或运维机上，`/etc/relais/server.toml` 可访问）：
+**CLI 命令**：除 `admin grant` 外均为远程 HTTP 调用（走 `relais admin login` 存下的会话 cookie），任意能连到服务器的机器上都能跑，不需要 `--config`、也不需要装在服务器上。`admin grant` 是唯一的服务器本地命令（直连数据库），必须在能访问 `/etc/relais/server.toml` 的机器（通常就是服务器本身）上执行：
 ```bash
-relais admin login <用户名> --config /etc/relais/server.toml    # 登录
+relais admin login <服务器地址>                                 # 登录（先输用户名密码，存会话），此后无需 --config
 relais admin channel list                                       # 列频道
 relais admin channel create <名>                                # 创频道
-relais admin channel delete <名>                                # 删频道
 relais admin member add <频道> <用户>                           # 添成员
 relais admin member remove <频道> <用户>                        # 移成员
-relais admin grant <用户> --config /etc/relais/server.toml      # 授管理权
-relais admin revoke <用户> --config /etc/relais/server.toml     # 撤管理权
+relais admin invite <频道>                                      # 生成邀请链接
+relais admin grant <用户> --config /etc/relais/server.toml      # 授管理权（服务器本地，直连 DB）
 ```
 
 **安全核心**：agent token（CLI 本地发消息用）**无任何管理权** —— 管理功能必须通过人工登录（web cookie 或 admin login session）。这是设计锁定，即使 agent token 泄露也无法操纵频道。

@@ -42,9 +42,9 @@ Hou 的 Mac                    香港 VPS                     伙伴的 Windows
 
 | 命令 | 用途 |
 |---|---|
-| `relais admin login <用户名>` | 登录为管理员，后续命令可用 |
+| `relais admin login <服务器地址>` | 登录为管理员，后续命令可用 |
 | `relais admin channel create <频道名>` | 创建新频道 |
-| `relais admin channel delete <频道名>` | 删除频道 |
+| `relais admin channel list` | 列出全部频道 |
 | `relais admin member add <频道> <用户>` | 添加成员到频道 |
 | `relais admin member remove <频道> <用户>` | 从频道移除成员 |
 | `relais admin invite <频道>` | 生成邀请链接 |

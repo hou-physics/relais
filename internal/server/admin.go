@@ -33,7 +33,7 @@ func (s *Server) handleAdminCreateChannel(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if !adminChannelNameRe.MatchString(req.Name) {
-		writeErr(w, http.StatusBadRequest, "频道名需为 2-32 位小写字母/数字/横线，且以字母开头")
+		writeErr(w, http.StatusBadRequest, "频道名需为 2-32 位小写字母/数字/横线/下划线，且以字母开头")
 		return
 	}
 	if _, err := s.st.ChannelByName(req.Name); err == nil {

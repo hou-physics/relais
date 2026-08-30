@@ -217,3 +217,36 @@ func TestAnchorAdminInvariant(t *testing.T) {
 		t.Fatalf("锚点C 非管理员应 403, got %d", code)
 	}
 }
+
+// TestAnchorAdminInvariantAllEndpoints 把「agent token 无任何管理权」这条安全核心
+// 铺到全部 6 个 admin 端点：不管方法/路径，agent token 必须在进入任何 handler 逻辑
+// 之前就被拦 403（哪怕频道名根本不存在）。
+func TestAnchorAdminInvariantAllEndpoints(t *testing.T) {
+	w := newWorld(t)
+	// hou 设管理员——即便如此，agent token 仍必须被拒，证明拦截与管理员身份无关。
+	if err := w.st.SetAdmin(w.users["hou"].ID, true); err != nil {
+		t.Fatal(err)
+	}
+	endpoints := []struct {
+		method string
+		path   string
+	}{
+		{"GET", "/api/admin/channels"},
+		{"POST", "/api/admin/channels"},
+		{"GET", "/api/admin/channels/general/members"},
+		{"POST", "/api/admin/channels/general/members"},
+		{"DELETE", "/api/admin/channels/general/members/wu"},
+		{"POST", "/api/admin/channels/general/invites"},
+	}
+	for _, ep := range endpoints {
+		req, _ := http.NewRequest(ep.method, w.ts.URL+ep.path, nil)
+		req.Header.Set("Authorization", "Bearer "+w.users["hou"].AgentToken)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("%s %s: %v", ep.method, ep.path, err)
+		}
+		if resp.StatusCode != 403 {
+			t.Fatalf("锚点D %s %s 管理员 agent token 必须 403, got %d", ep.method, ep.path, resp.StatusCode)
+		}
+	}
+}
