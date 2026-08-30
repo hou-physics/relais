@@ -1,6 +1,6 @@
 # Relais
 
-Relais is a lightweight agent-to-agent message relay: a single Go binary that runs as a server (HTTP API + SSE + embedded web UI), an agent-facing CLI (login/init/send/draft/inbox/pull/bridge), server-side admin channels management, and server-local admin commands. Two remote collaborators' AI agents exchange structured Markdown messages through a central channel, with a human approving each step — humans read the web timeline, agents read and write via the CLI. Admins manage channels and members through web or CLI. Dual-key isolation is enforced server-side: agent tokens cannot perform administrative actions. UI available in Chinese, English, and German.
+Relais is a lightweight agent-to-agent message relay: a single Go binary that runs as a server (HTTP API + SSE + embedded web UI), an agent-facing CLI (login/init/send/draft/inbox/pull/bridge), server-side admin channels management, autonomous-mode agent conversations with server-side safety guardrails, and server-local admin commands. Two remote collaborators' AI agents exchange structured Markdown messages through a central channel, with a human approving each step — humans read the web timeline, agents read and write via the CLI. Agents can also run autonomously in pre-approved channels with built-in safeguards (round caps, human-needed detection, auto-pause). Admins manage channels and members through web or CLI. Dual-key isolation is enforced server-side: agent tokens cannot perform administrative actions. UI available in Chinese, English, and German.
 
 让每个人的 AI agent 能"听见"彼此的结论。
 
@@ -32,11 +32,14 @@ Hou 的 Mac                    香港 VPS                     伙伴的 Windows
 
 | 命令 | 用途 |
 |---|---|
+| `relais setup` | 首次配置：连接服务器、登录、初始化项目 |
+| `relais doctor` | 诊断：检查 token、网络、权限 |
 | `relais send [--to 用户名] --summary "..." <文件>` | 发送消息给频道或指定收件人 |
 | `relais draft [--to 用户名] --summary "..." <文件>` | 存为草稿，网页点按钮再发 |
 | `relais inbox` | 列出未读消息 |
 | `relais pull [编号]` | 拉取消息到本地 relais/inbox/ |
 | `relais bridge` | 启动本地桥接，自动拉新消息 |
+| `relais auto on/off` | 开启/关闭自主模式（仅限网页管理） |
 
 ### 管理命令（仅限管理员，需登录）
 

@@ -250,3 +250,54 @@ func TestAnchorAdminInvariantAllEndpoints(t *testing.T) {
 		}
 	}
 }
+
+func TestAnchorAutoGovernance(t *testing.T) {
+	w := newWorld(t)
+	duo, _ := w.st.ChannelByName("duo")
+	// 人开启 cap=2
+	if err := w.st.SetAutoEnabled(duo.ID, true, 2); err != nil {
+		t.Fatal(err)
+	}
+	// agent turn 经 HTTP：前2放行、第3拒
+	turn := func() bool {
+		req, _ := http.NewRequest("POST", w.ts.URL+"/api/channels/duo/auto/turn", nil)
+		req.Header.Set("Authorization", "Bearer "+w.users["hou"].AgentToken)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var tr struct {
+			Allowed bool `json:"allowed"`
+		}
+		json.NewDecoder(resp.Body).Decode(&tr)
+		return tr.Allowed
+	}
+	if !turn() || !turn() {
+		t.Fatal("锚点：前2轮应放行")
+	}
+	if turn() {
+		t.Fatal("锚点：第3轮必须被拒(检查点)")
+	}
+	// needs-human 立即暂停后 turn 拒
+	w.st.ResumeAuto(duo.ID)
+	if err := w.st.SetNeedsHuman(duo.ID, "预算？"); err != nil {
+		t.Fatal(err)
+	}
+	if turn() {
+		t.Fatal("锚点：needs-human 暂停时必须拒 turn")
+	}
+	// 安全底线：默认新频道 auto 关闭 → turn 拒
+	w.st.CreateChannel("fresh")
+	fresh, _ := w.st.ChannelByName("fresh")
+	w.st.AddMember(fresh.ID, w.users["hou"].ID)
+	req, _ := http.NewRequest("POST", w.ts.URL+"/api/channels/fresh/auto/turn", nil)
+	req.Header.Set("Authorization", "Bearer "+w.users["hou"].AgentToken)
+	resp, _ := http.DefaultClient.Do(req)
+	var tr struct {
+		Allowed bool `json:"allowed"`
+	}
+	json.NewDecoder(resp.Body).Decode(&tr)
+	if tr.Allowed {
+		t.Fatal("锚点：默认未开启的频道必须拒 turn（安全底线）")
+	}
+}

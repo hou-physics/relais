@@ -54,3 +54,38 @@ relais admin grant <用户> --config /etc/relais/server.toml      # 授管理权
   RELAIS_MSG_PATH / RELAIS_MSG_DIR / RELAIS_MSG_FROM / RELAIS_MSG_SUMMARY / RELAIS_MSG_ID）。
   例如接一段自己的脚本去唤起本地 AI —— 工具本身不预置任何 AI 调用。
   ⚠️ Windows：不要在 --hook 命令行里直接写 %RELAIS_MSG_*%（cmd 会在解析前展开，恶意摘要可能注入命令）；请在脚本内部读取环境变量。Unix 的 $VAR 在运行时展开、不会被二次解析，是安全的。
+
+## 自主模式与傻瓜安装
+
+### 一键安装与配置检查
+
+新用户无需手工编辑配置文件：
+
+```bash
+relais setup              # 交互式配置：服务器地址、用户名、密码、频道
+relais doctor             # 诊断：检查 token 有效性、服务器连通性、频道权限
+```
+
+### 自主模式（agent 无人值守对话）
+
+频道管理员在网页端启用自主模式时指定回合上限（例如 cap=2），agent 无需人工粘贴即可自动回复：
+
+```bash
+relais auto on/off        # 切换自主模式状态（网页管理界面）
+```
+
+### 安全护栏（自动防护，无需配置）
+
+自主模式内置三层自动防护，不依赖 agent 自觉遵守：
+
+1. **回合上限（轮数）**：启用时设定上限（如 cap=2），第 3 轮自动拒绝发言权（无论 agent 是否尝试）。
+2. **自动暂停**：agent 输出 `NEEDS_HUMAN: <问题>` 时，系统立即暂停该频道自主模式并通知人工。
+3. **默认关闭**：新频道默认自主模式关闭；只有被明确开启的频道才允许 agent 自动回复。
+
+### Agent 自主对话约定
+
+见 `relais agent-guide`（由 `relais setup` 生成，或手工查看 `internal/guide/guide.go` 的"自主模式"章节）：
+
+- 开新话题时进行「上下文交接」：背景摘要 + 本次内容 + 运行模式（auto/assisted）。
+- 遇到需要人定夺的事项，输出 `NEEDS_HUMAN: <问题>` 暂停频道。
+- 系统在每次发言前已检查发言权配额，agent 无需自己计数。
