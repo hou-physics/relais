@@ -16,6 +16,48 @@ function md(text) {
   return DOMPurify.sanitize(marked.parse(text || ""));
 }
 
+// 轻量 frontmatter 解析：只认最前面的 --- 块里的 summary 行
+function parseFrontmatter(text) {
+  const m = text.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?/);
+  if (!m) return null;
+  const line = m[1].split(/\r?\n/).find((l) => /^summary\s*:/.test(l));
+  if (!line) return null;
+  let summary = line.replace(/^summary\s*:\s*/, "").trim();
+  if ((summary.startsWith('"') && summary.endsWith('"')) || (summary.startsWith("'") && summary.endsWith("'"))) {
+    summary = summary.slice(1, -1);
+  }
+  if (!summary) return null;
+  return { summary, body: text.slice(m[0].length).replace(/^\r?\n/, "") };
+}
+
+async function copyText(btn, text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    const old = btn.textContent;
+    btn.textContent = "已复制 ✓";
+    setTimeout(() => { btn.textContent = old; }, 1500);
+  } catch {
+    $("send-err").textContent = "复制失败：请检查浏览器剪贴板权限";
+  }
+}
+
+function aiTemplate() {
+  return [
+    "请把我接下来提供的内容，整理成一个用于 Relais 的 Markdown 消息文件。格式要求：",
+    "1. 文件最开头必须是三行文件头：",
+    "---",
+    "summary: <一两句话的摘要，给人快速浏览用>",
+    "---",
+    "2. 之后是完整正文（给对方 AI 阅读）：可以用标题、表格、代码块，可以包含希望对方 AI 执行的具体指令。",
+    "3. 摘要务必简洁准确；正文务必自包含（对方 AI 只看这一个文件）。",
+    "生成后把整个文件内容发给我。",
+  ].join("\n");
+}
+
+function aiInstruction(m) {
+  return "请运行 relais pull 拉取消息 " + m.id + "，阅读 relais/inbox/ 下对应文件，与我讨论后用 relais draft 起草回复（不要直接 send）。";
+}
+
 async function boot() {
   try {
     me = await api("/api/me");
@@ -59,14 +101,54 @@ async function loadChannels() {
   if (!channel && list.length) openChannel(location.hash.slice(1) || list[0].name);
 }
 
+async function loadDrafts() {
+  const box = $("drafts");
+  box.innerHTML = "";
+  let drafts = [];
+  try { drafts = await api("/api/channels/" + encodeURIComponent(channel) + "/drafts"); } catch { return; }
+  for (const d of drafts) {
+    const card = document.createElement("div");
+    card.className = "draft-card";
+    const tag = document.createElement("span");
+    tag.className = "draft-tag"; tag.textContent = "草稿";
+    const meta = document.createElement("span");
+    meta.className = "muted"; meta.textContent = "→ " + d.to.join(", ");
+    const sum = document.createElement("div");
+    sum.className = "summary"; sum.textContent = d.summary;
+    const body = document.createElement("div");
+    body.className = "body"; body.hidden = true;
+    const toggle = document.createElement("button");
+    toggle.className = "toggle"; toggle.textContent = "展开正文 ▾";
+    toggle.onclick = () => {
+      if (body.hidden) { body.innerHTML = d.body_md ? md(d.body_md) : "<p class='muted'>（无正文）</p>"; body.hidden = false; toggle.textContent = "收起 ▴"; }
+      else { body.hidden = true; toggle.textContent = "展开正文 ▾"; }
+    };
+    const send = document.createElement("button");
+    send.textContent = "发送";
+    send.onclick = async () => {
+      try { await api("/api/drafts/" + d.id + "/send", { method: "POST" }); loadDrafts(); refresh(); }
+      catch (e) { $("send-err").textContent = e.message; }
+    };
+    const del = document.createElement("button");
+    del.className = "ghost"; del.textContent = "删除";
+    del.onclick = async () => { await api("/api/drafts/" + d.id, { method: "DELETE" }); loadDrafts(); };
+    const row = document.createElement("div");
+    row.className = "row";
+    row.append(toggle, send, del);
+    card.append(tag, meta, sum, body, row);
+    box.append(card);
+  }
+}
+
 async function openChannel(name) {
   channel = name; location.hash = name;
   members = await api("/api/channels/" + encodeURIComponent(name) + "/members");
   renderToRow();
+  loadDrafts();
   await refresh();
   if (sse) sse.close();
   sse = new EventSource("/api/events?channel=" + encodeURIComponent(name));
-  sse.onmessage = () => { refresh(); loadChannels(); };
+  sse.onmessage = () => { refresh(); loadChannels(); loadDrafts(); };
   loadChannels();
 }
 
@@ -128,10 +210,12 @@ function renderMsg(m) {
   }
   const sum = document.createElement("div");
   sum.className = "summary"; sum.textContent = m.summary;
-  const toggle = document.createElement("button");
-  toggle.className = "toggle"; toggle.textContent = "展开正文 ▾";
   const body = document.createElement("div");
   body.className = "body"; body.hidden = true;
+  const actions = document.createElement("div");
+  actions.className = "actions";
+  const toggle = document.createElement("button");
+  toggle.className = "toggle"; toggle.textContent = "展开正文 ▾";
   toggle.onclick = async () => {
     if (body.hidden) {
       if (!body.innerHTML) {
@@ -141,7 +225,32 @@ function renderMsg(m) {
       body.hidden = false; toggle.textContent = "收起 ▴";
     } else { body.hidden = true; toggle.textContent = "展开正文 ▾"; }
   };
-  div.append(sum, toggle, body);
+  actions.append(toggle);
+  const copyRaw = document.createElement("button");
+  copyRaw.className = "toggle"; copyRaw.textContent = "复制原文";
+  copyRaw.onclick = async () => {
+    const full = await api("/api/messages/" + m.id);
+    const head = ["---", "id: " + full.id, "channel: " + full.channel, "from: " + full.from,
+      "to: [" + full.to.join(", ") + "]", "sent: " + full.created_at, "summary: " + full.summary, "---", ""].join("\n");
+    copyText(copyRaw, head + (full.body_md || ""));
+  };
+  actions.append(copyRaw);
+  if (m.to.includes(me.username)) {
+    const feed = document.createElement("button");
+    feed.className = "toggle"; feed.textContent = "复制给 AI 的指令";
+    feed.onclick = () => copyText(feed, aiInstruction(m));
+    actions.append(feed);
+    if (m.unread) {
+      const markRead = document.createElement("button");
+      markRead.className = "toggle"; markRead.textContent = "标记已读";
+      markRead.onclick = async () => {
+        await api("/api/messages/" + m.id + "/read", { method: "POST" });
+        refresh(); loadChannels();
+      };
+      actions.append(markRead);
+    }
+  }
+  div.append(sum, actions, body);
   return div;
 }
 
@@ -153,8 +262,14 @@ function loadFileIntoBody(file) {
   }
   const reader = new FileReader();
   reader.onload = () => {
+    let text = reader.result;
+    const fm = parseFrontmatter(text);
+    if (fm) {
+      if (!$("summary").value) $("summary").value = fm.summary;
+      text = fm.body;
+    }
     const body = $("body");
-    body.value = body.value ? body.value + "\n\n" + reader.result : reader.result;
+    body.value = body.value ? body.value + "\n\n" + text : text;
     $("send-err").textContent = "";
   };
   reader.readAsText(file);
@@ -182,8 +297,10 @@ $("composer").addEventListener("submit", async (e) => {
       body: JSON.stringify({ to, summary: $("summary").value, body_md: $("body").value }),
     });
     $("summary").value = ""; $("body").value = ""; $("send-err").textContent = "";
-    refresh();
+    refresh(); loadDrafts();
   } catch (err) { $("send-err").textContent = err.message; }
 });
+
+$("tpl-btn").addEventListener("click", () => copyText($("tpl-btn"), aiTemplate()));
 
 boot();

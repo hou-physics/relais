@@ -30,10 +30,18 @@
     <pre id="init-cmd"></pre>
   </div>
   <div class="card" id="step3" hidden>
-    <h2>第 3 步 · 接上你的 agent</h2>
-    <p>把下面这段说明贴进你 agent 的配置文件（如 AGENTS.md / CLAUDE.md），agent 就会用了：</p>
-    <pre id="guide"></pre>
-    <p>完成！打开 <a id="home-link" href="/">Relais 网页</a> 用刚才的用户名密码登录，就能看到频道了。<br>
+    <h2>第 3 步 · 接上你的 AI</h2>
+    <details open>
+      <summary>我用命令行 agent（Claude Code / Codex / Kimi CLI）</summary>
+      <p>把下面这段说明贴进你 agent 的配置文件（如 AGENTS.md / CLAUDE.md）：</p>
+      <pre id="guide"></pre>
+    </details>
+    <details>
+      <summary>我不用命令行（网页版 ChatGPT 等聊天 AI）</summary>
+      <p>把下面的格式模板发给你的 AI，让它按格式生成消息文件；生成后整段复制（或存成 .md 文件），拖进 Relais 网页的发送框——摘要会自动填好。</p>
+      <pre id="tpl"></pre>
+    </details>
+    <p>完成！打开 <a id="home-link" href="/">Relais 网页</a> 用刚才的用户名密码登录。<br>
     小提示：浏览器菜单里选「安装应用」，Relais 就会像独立软件一样出现在任务栏/程序坞。</p>
   </div>
 </div>
@@ -65,6 +73,16 @@ $("j-btn").onclick = async () => {
   $("login-cmd").textContent = data.login_cmd;
   $("init-cmd").textContent = "relais init " + (data.channel || "<频道名>");
   $("guide").textContent = data.guide;
+  $("tpl").textContent = [
+    "请把我接下来提供的内容，整理成一个用于 Relais 的 Markdown 消息文件。格式要求：",
+    "1. 文件最开头必须是三行文件头：",
+    "---",
+    "summary: <一两句话的摘要，给人快速浏览用>",
+    "---",
+    "2. 之后是完整正文（给对方 AI 阅读）：可以用标题、表格、代码块，可以包含希望对方 AI 执行的具体指令。",
+    "3. 摘要务必简洁准确；正文务必自包含（对方 AI 只看这一个文件）。",
+    "生成后把整个文件内容发给我。",
+  ].join("\n");
   $("step2").hidden = false; $("step3").hidden = false;
 };
 </script>
