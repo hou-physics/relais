@@ -47,4 +47,12 @@ func TestWindowsHookHasGuardrails(t *testing.T) {
 	if !strings.Contains(h, "findstr /b /c:\"---\"") {
 		t.Fatal("windows hook 缺少格式校验（--- 前缀）")
 	}
+	// 闸门锚点：auto-turn 被拒时必须真正 exit（& 分隔命令，非转义的 ^& 字面量），
+	// 否则会越过闸门继续跑到 send。防止修复轮 1 的 ^& 回归复发。
+	if !strings.Contains(h, "& exit /b 0)") {
+		t.Fatal("windows hook auto-turn 拒绝分支缺少真正的 exit（闸门失效）")
+	}
+	if strings.Contains(h, "^& exit /b 0") {
+		t.Fatal("windows hook auto-turn 分支用了转义的 ^&，exit 不会执行（闸门失效）")
+	}
 }

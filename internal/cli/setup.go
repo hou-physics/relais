@@ -118,7 +118,7 @@ func writeHookWindows(info SetupInfo) (string, error) {
 	script := "@echo off\r\n" +
 		"setlocal enabledelayedexpansion\r\n" +
 		"cd /d \"%RELAIS_MSG_DIR%\" || exit /b 1\r\n" +
-		"\"" + relais + "\" auto-turn || (echo auto: 已暂停/检查点/需人处理 ^& exit /b 0)\r\n" +
+		"\"" + relais + "\" auto-turn || (echo auto: 已暂停/检查点/需人处理 & exit /b 0)\r\n" +
 		"for /f \"delims=\" %%g in ('\"" + relais + "\" guidance-pull') do set \"GUIDANCE=%%g\"\r\n" +
 		"set \"PROMPT=读取 %RELAIS_MSG_PATH% 的消息并简短回复；若需人定夺只输出一行 NEEDS_HUMAN: 问题；否则只输出以 --- 开头的消息文件（--- summary --- 正文）。雇主引导：!GUIDANCE!\"\r\n" +
 		"set \"OUT=%TEMP%\\relais-reply.md\"\r\n" +
@@ -127,7 +127,7 @@ func writeHookWindows(info SetupInfo) (string, error) {
 		"set /p FIRST=<\"%OUT%\"\r\n" +
 		"echo(!FIRST!| findstr /b /c:\"NEEDS_HUMAN:\" >nul\r\n" +
 		"if !errorlevel!==0 (\r\n" +
-		"  set \"Q=!FIRST:NEEDS_HUMAN:=!\"\r\n" +
+		"  set \"Q=!FIRST:NEEDS_HUMAN: =!\"\r\n" +
 		"  \"" + relais + "\" needs-human \"!Q!\"\r\n" +
 		") else (\r\n" +
 		"  echo(!FIRST!| findstr /b /c:\"---\" >nul\r\n" +
