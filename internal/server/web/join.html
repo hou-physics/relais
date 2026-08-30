@@ -22,10 +22,10 @@
   </div>
   <div class="card" id="step2" hidden>
     <h2 data-i18n="step2">第 2 步 · 安装命令行工具（agent 要用它收发消息）</h2>
-    <p>最省事：复制这一行到终端运行，自动装好（含路径配置）。</p>
-    <p><b>Mac / Linux：</b></p>
+    <p data-i18n="oneLineHint">最省事：复制这一行到终端运行，自动装好（含路径配置）。</p>
+    <p><b>Mac / Linux:</b></p>
     <pre id="inst-unix">curl -fsSL __ORIGIN__/install.sh | sh</pre>
-    <p><b>Windows（PowerShell）：</b></p>
+    <p><b>Windows (PowerShell):</b></p>
     <pre id="inst-win">irm __ORIGIN__/install.ps1 | iex</pre>
     <p data-i18n="dlHint">下载后放到任意目录（Windows 无需安装，双击都不用）：</p>
     <div id="downloads"></div>
@@ -67,6 +67,7 @@ const J18N = {
     step1: "第 1 步 · 创建账号", uname: "用户名（小写字母开头，仅小写/数字/横线）",
     dname: "显示名（给同伴看的名字）", pw: "密码（至少 8 位）", create: "创建账号并加入",
     step2: "第 2 步 · 安装命令行工具（agent 要用它收发消息）",
+    oneLineHint: "最省事：复制这一行到终端运行，自动装好（含路径配置）。",
     dlHint: "下载后放到任意目录（Windows 无需安装，双击都不用）：",
     loginHint: "然后打开终端，粘贴运行这一条（含你的专属钥匙，别转发给他人）：",
     initHint: "再进入你们的项目文件夹，运行：",
@@ -89,6 +90,7 @@ const J18N = {
     step1: "Step 1 · Create your account", uname: "Username (lowercase letter first; a-z, 0-9, dash)",
     dname: "Display name (shown to teammates)", pw: "Password (min. 8 chars)", create: "Create account & join",
     step2: "Step 2 · Install the CLI tool (your agent uses it to send/receive)",
+    oneLineHint: "Easiest: copy this one line into your terminal and run it - it installs everything (PATH included).",
     dlHint: "Download and put it anywhere (no installation, not even a double-click needed on Windows):",
     loginHint: "Then open a terminal and paste this one line (it contains your personal key - don't share it):",
     initHint: "Then, inside your project folder, run:",
@@ -111,6 +113,7 @@ const J18N = {
     step1: "Schritt 1 · Konto anlegen", uname: "Benutzername (Kleinbuchstabe zuerst; a-z, 0-9, Bindestrich)",
     dname: "Anzeigename (für dein Team sichtbar)", pw: "Passwort (mind. 8 Zeichen)", create: "Konto anlegen & beitreten",
     step2: "Schritt 2 · CLI-Tool installieren (dein Agent sendet/empfängt damit)",
+    oneLineHint: "Am einfachsten: diese eine Zeile ins Terminal kopieren und ausführen - installiert alles (inkl. PATH).",
     dlHint: "Herunterladen und irgendwo ablegen (keine Installation nötig):",
     loginHint: "Dann ein Terminal öffnen und diese Zeile einfügen (enthält deinen persönlichen Schlüssel - nicht weitergeben):",
     initHint: "Danach im Projektordner ausführen:",
