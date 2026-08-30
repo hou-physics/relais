@@ -30,7 +30,8 @@ func notifyCmd(from, summary string) *exec.Cmd {
 				`$n=New-Object System.Windows.Forms.NotifyIcon;$n.Icon=[System.Drawing.SystemIcons]::Information;`+
 				`$n.Visible=$true;$n.ShowBalloonTip(5000,$env:RELAIS_NT_TITLE,$env:RELAIS_NT_SUMMARY,[System.Windows.Forms.ToolTipIcon]::Info)`)
 	default:
-		cmd = exec.Command("notify-send", os.Getenv("RELAIS_NT_TITLE"), os.Getenv("RELAIS_NT_SUMMARY"))
+		// Linux: notify-send is exec'd directly (not shell-interpreted), so passing argv is injection-safe
+		cmd = exec.Command("notify-send", title, summary)
 	}
 	cmd.Env = append(os.Environ(), "RELAIS_NT_TITLE="+title, "RELAIS_NT_SUMMARY="+summary)
 	return cmd

@@ -3,6 +3,7 @@ package cli
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -82,17 +83,37 @@ func TestNotifyCommandHasNoContentInjection(t *testing.T) {
 	summary := `' "whoami" ` + "`ps`"
 
 	cmd := notifyCmd(from, summary)
+	title := "Relais · " + from
 
-	// Verify that neither from nor summary appear in cmd.Args
-	for _, arg := range cmd.Args {
-		if strings.Contains(arg, from) || strings.Contains(arg, summary) ||
-			strings.Contains(arg, "$(id)") || strings.Contains(arg, "whoami") ||
-			strings.Contains(arg, "`ps`") {
-			t.Fatalf("Message content leaked into cmd.Args: %v", cmd.Args)
+	// For darwin and windows: verify payload does NOT leak into cmd.Args
+	// (command strings are never shell-interpolated, so injection is impossible)
+	if runtime.GOOS != "linux" {
+		for _, arg := range cmd.Args {
+			if strings.Contains(arg, from) || strings.Contains(arg, summary) ||
+				strings.Contains(arg, "$(id)") || strings.Contains(arg, "whoami") ||
+				strings.Contains(arg, "`ps`") {
+				t.Fatalf("Message content leaked into cmd.Args on %s: %v", runtime.GOOS, cmd.Args)
+			}
 		}
 	}
 
-	// Verify content is in env vars only
+	// For linux: verify exact title and summary ARE in cmd.Args (notify-send is safe)
+	if runtime.GOOS == "linux" {
+		foundTitle, foundSummary := false, false
+		for _, arg := range cmd.Args {
+			if arg == title {
+				foundTitle = true
+			}
+			if arg == summary {
+				foundSummary = true
+			}
+		}
+		if !foundTitle || !foundSummary {
+			t.Fatalf("Linux notify-send should have title and summary in Args: %v", cmd.Args)
+		}
+	}
+
+	// Verify content is in env vars for all platforms (harmless for linux, needed for darwin/windows)
 	foundInEnv := false
 	for _, env := range cmd.Env {
 		if strings.HasPrefix(env, "RELAIS_NT_SUMMARY=") || strings.HasPrefix(env, "RELAIS_NT_TITLE=") {
