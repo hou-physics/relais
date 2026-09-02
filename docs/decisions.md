@@ -5,6 +5,14 @@
 
 ---
 
+## 2026-09-02 · D34 M6 候选：借 A2A 的三颗螺丝（RESOLVED 终态 + 结论产物 + 幂等发送）
+
+- **问题**：M5 自主循环只因撞 cap 或 needs-human 而停，缺"两个 agent 谈拢了"这个最有价值的信号；且 hook 重试/bridge 重跑可能重复自动发送。
+- **考虑过**：让 Relais 直接说 A2A（接生态）——被否：那是另一层（互操作标准），会淹没我们"人在环 + 傻瓜跨模型"的差异化，且对两个人是过度设计；改为**只取 A2A 里契合我们的思想，不接线格式**。
+- **选择**：写 M6 候选 spec `docs/superpowers/specs/2026-09-02-relais-m6-resolved-artifact-design.md`：① **RESOLVED 终态**——agent 首行 `RESOLVED: <结论>`（hook 四分支，优先级高于 NEEDS_HUMAN），走 `POST /auto/resolve` 停循环，**agent 只提议、人来批准**（网页「确认结论/继续讨论」）；② **结论产物**——结论作 `kind: conclusion` 标记消息 + channel_auto 指针，网页绿色置顶卡片，人不用翻全程；③ **幂等发送**——send 带 `Idempotency-Key`，`sent_keys` 表同 key 只落一条，护住自动路径。明确不取：8 态机/gRPC/AgentCard 发现/签名/OAuth/Webhook/独立 Artifact 子系统。
+- **状态**：候选草案，未排期（v0.5.0-m6 暂定）。
+- **反转触发**：真开始做 M6 时按需增删（如 needs_human 类型化、"对方是否会自动回"的能力声明列为更次要候选）。
+
 ## 2026-08-30 · D33 M5 执行期偏离（对照 spec 的两处实现选择）
 
 - **问题**：M5 落地时两处实现与 spec 文字不完全一致，需记档以免后续维护者找错地方。
