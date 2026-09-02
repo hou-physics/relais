@@ -205,6 +205,7 @@ func RunSetup(args []string) error {
 	if err := saveSetup(info); err != nil {
 		return err
 	}
-	fmt.Println("下一步：relais doctor 自检；relais setup --service 装成开机常驻；或在项目里 relais auto on 开启自主对话。")
+	fmt.Println("下一步：relais doctor 自检；relais setup --service 装成开机常驻（让 bridge 一直在后台跑）。")
+	fmt.Println("开启自主对话请到网页：进频道 → 顶部状态条设回合上限 → 点「开启自主对话」（开关只在网页，命令行的 agent 钥匙不能开）。")
 	return nil
 }
