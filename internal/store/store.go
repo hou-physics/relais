@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -816,26 +817,37 @@ func (s *Store) RemoveMember(channelID, userID int64) error {
 }
 
 type AutoState struct {
-	Enabled     bool
-	RoundCount  int
-	Cap         int
-	Paused      bool
-	NeedsHumanQ string
+	Enabled         bool
+	RoundCount      int
+	Cap             int
+	Paused          bool
+	NeedsHumanQ     string
+	Mode            string // supervised | autopilot
+	Resolved        bool
+	ResolutionMsgID string
+	KickedOff       bool
+	Closed          bool
+	InFlight        bool // 最新一条（按 seq）仍有收件人未读
 }
 
 func (s *Store) GetAuto(channelID int64) (AutoState, error) {
-	var a AutoState
-	var en, paused int
-	err := s.db.QueryRow(`SELECT enabled, round_count, cap, paused, needs_human_q FROM channel_auto WHERE channel_id=?`, channelID).
-		Scan(&en, &a.RoundCount, &a.Cap, &paused, &a.NeedsHumanQ)
-	if errors.Is(err, sql.ErrNoRows) {
-		return AutoState{Enabled: false, Cap: 6}, nil
-	}
-	if err != nil {
+	a := AutoState{Enabled: false, Cap: 6, Mode: "supervised"}
+	var en, paused, resolved, kicked, closed int
+	err := s.db.QueryRow(`SELECT enabled, round_count, cap, paused, needs_human_q, mode, resolved, resolution_msg_id, kicked_off, closed
+		FROM channel_auto WHERE channel_id=?`, channelID).
+		Scan(&en, &a.RoundCount, &a.Cap, &paused, &a.NeedsHumanQ, &a.Mode, &resolved, &a.ResolutionMsgID, &kicked, &closed)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return a, err
 	}
-	a.Enabled = en == 1
-	a.Paused = paused == 1
+	if err == nil {
+		a.Enabled, a.Paused, a.Resolved, a.KickedOff, a.Closed = en == 1, paused == 1, resolved == 1, kicked == 1, closed == 1
+	}
+	var unread int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM recipients r WHERE r.read_at IS NULL AND r.message_id =
+		(SELECT id FROM messages WHERE channel_id=? AND seq>0 ORDER BY seq DESC LIMIT 1)`, channelID).Scan(&unread); err != nil {
+		return a, err
+	}
+	a.InFlight = unread > 0
 	return a, nil
 }
 
@@ -860,15 +872,21 @@ func (s *Store) RequestTurn(channelID int64) (bool, string, error) {
 		return false, "", err
 	}
 	defer tx.Rollback()
-	var en, paused, round, cap int
+	var en, paused, round, cap, closed, resolved int
 	var q string
-	err = tx.QueryRow(`SELECT enabled, paused, round_count, cap, needs_human_q FROM channel_auto WHERE channel_id=?`, channelID).
-		Scan(&en, &paused, &round, &cap, &q)
+	err = tx.QueryRow(`SELECT enabled, paused, round_count, cap, needs_human_q, closed, resolved FROM channel_auto WHERE channel_id=?`, channelID).
+		Scan(&en, &paused, &round, &cap, &q, &closed, &resolved)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, "自动模式未开启", nil
 	}
 	if err != nil {
 		return false, "", err
+	}
+	if closed == 1 {
+		return false, "频道已关闭", nil
+	}
+	if resolved == 1 {
+		return false, "已握手，等人处理", nil
 	}
 	if en != 1 {
 		return false, "自动模式未开启", nil
@@ -877,7 +895,12 @@ func (s *Store) RequestTurn(channelID int64) (bool, string, error) {
 		return false, "已暂停（等待人处理）", nil
 	}
 	if round >= cap {
-		return false, "已到检查点（等待人确认继续）", nil
+		tx.Rollback()
+		q := s.capHitQuestion(channelID, cap)
+		if err := s.SetNeedsHuman(channelID, q); err != nil {
+			return false, "", err
+		}
+		return false, "已到回合上限（等待人决定）", nil
 	}
 	res, err := tx.Exec(`UPDATE channel_auto SET round_count=round_count+1 WHERE channel_id=? AND round_count<cap`, channelID)
 	if err != nil {
@@ -889,12 +912,36 @@ func (s *Store) RequestTurn(channelID int64) (bool, string, error) {
 	}
 	if n == 0 {
 		// 竞态下另一并发请求已用掉最后一个名额
-		return false, "已到检查点（等待人确认继续）", nil
+		tx.Rollback()
+		q := s.capHitQuestion(channelID, cap)
+		if err := s.SetNeedsHuman(channelID, q); err != nil {
+			return false, "", err
+		}
+		return false, "已到回合上限（等待人决定）", nil
 	}
 	if err := tx.Commit(); err != nil {
 		return false, "", err
 	}
 	return true, "", nil
+}
+
+// capHitQuestion 组装"回合上限已到"的 needs-human 文案，附最近两位发言者各自最后一句摘要。
+func (s *Store) capHitQuestion(channelID int64, cap int) string {
+	rows, err := s.db.Query(`SELECT u.username, m.summary FROM messages m JOIN users u ON u.id=m.sender_id
+		WHERE m.channel_id=? AND m.seq>0
+		  AND m.seq = (SELECT MAX(seq) FROM messages WHERE channel_id=m.channel_id AND sender_id=m.sender_id)
+		ORDER BY m.seq DESC LIMIT 2`, channelID)
+	positions := ""
+	if err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var who, sum string
+			if rows.Scan(&who, &sum) == nil {
+				positions += who + "：" + sum + " / "
+			}
+		}
+	}
+	return fmt.Sprintf("回合上限已到（%d 回合）。最后立场：%s再放几轮、你来裁、还是关掉？", Round(cap), positions)
 }
 
 func (s *Store) PauseAuto(channelID int64) error {
@@ -910,6 +957,161 @@ func (s *Store) ResumeAuto(channelID int64) error {
 func (s *Store) SetNeedsHuman(channelID int64, q string) error {
 	_, err := s.db.Exec(`UPDATE channel_auto SET paused=1, needs_human_q=? WHERE channel_id=?`, q, channelID)
 	return err
+}
+
+type HandshakeResult int
+
+const (
+	HandshakeNone          HandshakeResult = iota // 不构成握手（首次提议 / ack 无效）
+	HandshakeDone                                 // 握手成立：resolved=1, paused=1, 第二条改 conclusion
+	HandshakeOwnerConflict                        // 前三条件成立但 owner 不同 → needs-human
+)
+
+// EvaluateHandshake 在 m2（kind=resolved）入库后判定是否与它 ack_of 指向的提议构成握手（spec §6.2）。
+func (s *Store) EvaluateHandshake(channelID int64, m2ID string) (HandshakeResult, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return HandshakeNone, err
+	}
+	defer tx.Rollback()
+	var m2Sender int64
+	var m2Kind, m2Owner, m2Reason, ackOf string
+	var m2Seq int
+	if err := tx.QueryRow(`SELECT sender_id, kind, owner, owner_reason, ack_of, seq FROM messages WHERE id=? AND channel_id=?`, m2ID, channelID).
+		Scan(&m2Sender, &m2Kind, &m2Owner, &m2Reason, &ackOf, &m2Seq); err != nil {
+		return HandshakeNone, err
+	}
+	if m2Kind != "resolved" || ackOf == "" {
+		return HandshakeNone, nil
+	}
+	var m1Sender int64
+	var m1Kind, m1Owner, m1Reason string
+	var m1Seq int
+	err = tx.QueryRow(`SELECT sender_id, kind, owner, owner_reason, seq FROM messages WHERE id=? AND channel_id=?`, ackOf, channelID).
+		Scan(&m1Sender, &m1Kind, &m1Owner, &m1Reason, &m1Seq)
+	if errors.Is(err, sql.ErrNoRows) {
+		return HandshakeNone, nil
+	}
+	if err != nil {
+		return HandshakeNone, err
+	}
+	if m1Kind != "resolved" || m1Sender == m2Sender {
+		return HandshakeNone, nil
+	}
+	var newer int
+	if err := tx.QueryRow(`SELECT COUNT(*) FROM messages WHERE channel_id=? AND kind='resolved' AND seq>? AND seq<?`, channelID, m1Seq, m2Seq).Scan(&newer); err != nil {
+		return HandshakeNone, err
+	}
+	if newer > 0 {
+		return HandshakeNone, nil
+	}
+	if m1Owner != m2Owner {
+		n1, _ := s.usernameByIDTx(tx, m1Sender)
+		n2, _ := s.usernameByIDTx(tx, m2Sender)
+		q := fmt.Sprintf("承接方分歧：%s 提名 %s（%s），%s 提名 %s（%s），请定", n1, m1Owner, m1Reason, n2, m2Owner, m2Reason)
+		if _, err := tx.Exec(`UPDATE channel_auto SET paused=1, needs_human_q=? WHERE channel_id=?`, q, channelID); err != nil {
+			return HandshakeNone, err
+		}
+		return HandshakeOwnerConflict, tx.Commit()
+	}
+	if _, err := tx.Exec(`UPDATE messages SET kind='conclusion' WHERE id=?`, m2ID); err != nil {
+		return HandshakeNone, err
+	}
+	if _, err := tx.Exec(`UPDATE channel_auto SET resolved=1, resolution_msg_id=?, paused=1 WHERE channel_id=?`, m2ID, channelID); err != nil {
+		return HandshakeNone, err
+	}
+	return HandshakeDone, tx.Commit()
+}
+
+func (s *Store) usernameByIDTx(tx *sql.Tx, id int64) (string, error) {
+	var n string
+	err := tx.QueryRow(`SELECT username FROM users WHERE id=?`, id).Scan(&n)
+	return n, err
+}
+
+var ErrNotResolved = errors.New("频道尚未握手，无结论可开工")
+
+// Kickoff 把当前结论投递为一条 kind=kickoff 消息（发全体成员，不占 seq），并让频道回到空闲。
+func (s *Store) Kickoff(channelID, actorID int64) (*Message, error) {
+	a, err := s.GetAuto(channelID)
+	if err != nil {
+		return nil, err
+	}
+	if !a.Resolved || a.ResolutionMsgID == "" {
+		return nil, ErrNotResolved
+	}
+	var body, owner string
+	if err := s.db.QueryRow(`SELECT body_md, owner FROM messages WHERE id=?`, a.ResolutionMsgID).Scan(&body, &owner); err != nil {
+		return nil, err
+	}
+	members, err := s.ListMembers(channelID)
+	if err != nil {
+		return nil, err
+	}
+	var to []int64
+	for _, m := range members {
+		to = append(to, m.ID)
+	}
+	id := ulid.Make().String()
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`INSERT INTO messages (id, channel_id, sender_id, summary, body_md, in_reply_to, created_at, seq, kind, owner, owner_reason, ack_of)
+		VALUES (?,?,?,?,?,NULL,?,0,'kickoff',?,'',?)`, id, channelID, actorID, "开工 · 承接方 "+owner, body, now(), owner, a.ResolutionMsgID); err != nil {
+		return nil, err
+	}
+	for _, uid := range to {
+		if _, err := tx.Exec(`INSERT INTO recipients (message_id, user_id) VALUES (?,?)`, id, uid); err != nil {
+			return nil, err
+		}
+	}
+	if _, err := tx.Exec(`UPDATE channel_auto SET kicked_off=1, resolved=0, paused=0, round_count=0, needs_human_q='' WHERE channel_id=?`, channelID); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return s.GetMessage(id, actorID, false)
+}
+
+func (s *Store) Reopen(channelID int64) error {
+	_, err := s.db.Exec(`UPDATE channel_auto SET resolved=0, resolution_msg_id='', paused=0, round_count=0, needs_human_q='' WHERE channel_id=?`, channelID)
+	return err
+}
+
+func (s *Store) SetMode(channelID int64, mode string) error {
+	if mode != "supervised" && mode != "autopilot" {
+		return fmt.Errorf("mode 只能是 supervised 或 autopilot")
+	}
+	_, err := s.db.Exec(`INSERT INTO channel_auto (channel_id, mode) VALUES (?,?)
+		ON CONFLICT(channel_id) DO UPDATE SET mode=excluded.mode`, channelID, mode)
+	return err
+}
+
+func (s *Store) CloseChannel(channelID int64) error {
+	_, err := s.db.Exec(`UPDATE channel_auto SET closed=1, paused=1 WHERE channel_id=?`, channelID)
+	return err
+}
+
+func (s *Store) ClearKickedOff(channelID int64) error {
+	_, err := s.db.Exec(`UPDATE channel_auto SET kicked_off=0 WHERE channel_id=?`, channelID)
+	return err
+}
+
+func (s *Store) SetSetting(key, value string) error {
+	_, err := s.db.Exec(`INSERT INTO settings (key, value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, key, value)
+	return err
+}
+
+func (s *Store) GetSetting(key string) (string, error) {
+	var v string
+	err := s.db.QueryRow(`SELECT value FROM settings WHERE key=?`, key).Scan(&v)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return v, err
 }
 
 func (s *Store) SetGuidance(channelID, userID int64, note string) error {

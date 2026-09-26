@@ -3,6 +3,7 @@ package store
 import (
 	"errors"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -621,5 +622,172 @@ func TestIdempotentSend(t *testing.T) {
 	}
 	if len(seen) != 1 {
 		t.Fatalf("并发同 key 应恰好一条，得到 %d", len(seen))
+	}
+}
+
+func seedDuo(t *testing.T) (*Store, *Channel, *User, *User) {
+	t.Helper()
+	st := testStore(t)
+	a, _ := st.CreateUser("claude", "Claude 侧", "pw")
+	b, _ := st.CreateUser("codex", "Codex 侧", "pw")
+	ch, _ := st.CreateChannel("m1")
+	st.AddMember(ch.ID, a.ID)
+	st.AddMember(ch.ID, b.ID)
+	if err := st.SetAutoEnabled(ch.ID, true, 16); err != nil {
+		t.Fatal(err)
+	}
+	return st, ch, a, b
+}
+
+func TestHandshake(t *testing.T) {
+	st, ch, a, b := seedDuo(t)
+	m1, _ := st.SaveMessageOpts(ch.ID, a.ID, []int64{b.ID}, "结论", "X", "", SaveOpts{Kind: "resolved", Owner: "codex", OwnerReason: "r"})
+	if r, _ := st.EvaluateHandshake(ch.ID, m1.ID); r != HandshakeNone {
+		t.Fatalf("第一次提议不应握手: %v", r)
+	}
+	// 人的普通消息夹在中间不影响
+	st.SaveMessageOpts(ch.ID, a.ID, []int64{b.ID}, "补充", "y", "", SaveOpts{})
+	m2, _ := st.SaveMessageOpts(ch.ID, b.ID, []int64{a.ID}, "附和", "X'", "", SaveOpts{Kind: "resolved", Owner: "codex", AckOf: m1.ID})
+	r, err := st.EvaluateHandshake(ch.ID, m2.ID)
+	if err != nil || r != HandshakeDone {
+		t.Fatalf("应握手: %v %v", r, err)
+	}
+	a1, _ := st.GetAuto(ch.ID)
+	if !a1.Resolved || a1.ResolutionMsgID != m2.ID || !a1.Paused {
+		t.Fatalf("握手后状态错: %+v", a1)
+	}
+	got, _ := st.GetMessage(m2.ID, a.ID, false)
+	if got.Kind != "conclusion" {
+		t.Fatalf("第二条应改写为 conclusion: %q", got.Kind)
+	}
+	if ok, reason, _ := st.RequestTurn(ch.ID); ok || reason == "" {
+		t.Fatal("握手后 turn 必须拒")
+	}
+}
+
+func TestHandshakeRejects(t *testing.T) {
+	st, ch, a, b := seedDuo(t)
+	m1, _ := st.SaveMessageOpts(ch.ID, a.ID, []int64{b.ID}, "s", "X", "", SaveOpts{Kind: "resolved", Owner: "codex"})
+	// owner 不同 → 冲突转人
+	m2, _ := st.SaveMessageOpts(ch.ID, b.ID, []int64{a.ID}, "s", "X", "", SaveOpts{Kind: "resolved", Owner: "claude", OwnerReason: "我熟", AckOf: m1.ID})
+	if r, _ := st.EvaluateHandshake(ch.ID, m2.ID); r != HandshakeOwnerConflict {
+		t.Fatalf("owner 不同应冲突: %v", r)
+	}
+	a1, _ := st.GetAuto(ch.ID)
+	if a1.Resolved || !strings.Contains(a1.NeedsHumanQ, "承接方分歧") {
+		t.Fatalf("冲突应转 needs-human: %+v", a1)
+	}
+	st.ResumeAuto(ch.ID)
+	// 同侧自 ack → 不算
+	m3, _ := st.SaveMessageOpts(ch.ID, a.ID, []int64{b.ID}, "s", "X", "", SaveOpts{Kind: "resolved", Owner: "codex", AckOf: m1.ID})
+	if r, _ := st.EvaluateHandshake(ch.ID, m3.ID); r != HandshakeNone {
+		t.Fatal("同侧不能自握手")
+	}
+	// 中间又出现新的 resolved（m3）→ 对旧 m1 的 ack 失效
+	m4, _ := st.SaveMessageOpts(ch.ID, b.ID, []int64{a.ID}, "s", "X", "", SaveOpts{Kind: "resolved", Owner: "codex", AckOf: m1.ID})
+	if r, _ := st.EvaluateHandshake(ch.ID, m4.ID); r != HandshakeNone {
+		t.Fatal("ack 指向的不是最新提议，不应握手")
+	}
+	// 无 ack_of → 只是新提议
+	m5, _ := st.SaveMessageOpts(ch.ID, a.ID, []int64{b.ID}, "s", "X", "", SaveOpts{Kind: "resolved", Owner: "codex"})
+	if r, _ := st.EvaluateHandshake(ch.ID, m5.ID); r != HandshakeNone {
+		t.Fatal("无 ack_of 不握手")
+	}
+}
+
+func TestKickoffReopenModeClose(t *testing.T) {
+	st, ch, a, b := seedDuo(t)
+	m1, _ := st.SaveMessageOpts(ch.ID, a.ID, []int64{b.ID}, "s", "结论正文", "", SaveOpts{Kind: "resolved", Owner: "codex"})
+	m2, _ := st.SaveMessageOpts(ch.ID, b.ID, []int64{a.ID}, "s", "最终结论", "", SaveOpts{Kind: "resolved", Owner: "codex", AckOf: m1.ID})
+	st.EvaluateHandshake(ch.ID, m2.ID)
+	if _, err := st.Kickoff(ch.ID, a.ID); err != nil {
+		t.Fatal(err)
+	}
+	k, err := st.Kickoff(ch.ID, a.ID)
+	if err == nil {
+		t.Fatalf("未 resolved 时 Kickoff 应报错: %+v", k)
+	}
+	a1, _ := st.GetAuto(ch.ID)
+	if !a1.KickedOff || a1.Resolved || a1.Paused || a1.RoundCount != 0 || a1.ResolutionMsgID != m2.ID {
+		t.Fatalf("kickoff 后状态错: %+v", a1)
+	}
+	list, _ := st.ListEnvelopes(ch.ID, b.ID, true, true)
+	last := list[len(list)-1]
+	if last.Kind != "kickoff" || last.Owner != "codex" || last.Seq != 0 {
+		t.Fatalf("kickoff 消息应 kind=kickoff、带 owner、不占 seq: %+v", last)
+	}
+	full, _ := st.GetMessage(last.ID, b.ID, true)
+	if full.Body != "最终结论" || len(full.To) != 2 {
+		t.Fatalf("kickoff 正文应是结论且发全体: %+v", full)
+	}
+	if err := st.ClearKickedOff(ch.ID); err != nil {
+		t.Fatal(err)
+	}
+	// reopen
+	st.SaveMessageOpts(ch.ID, a.ID, []int64{b.ID}, "s", "x", "", SaveOpts{Kind: "resolved", Owner: "codex"})
+	m4, _ := st.SaveMessageOpts(ch.ID, b.ID, []int64{a.ID}, "s", "x", "", SaveOpts{Kind: "resolved", Owner: "codex", AckOf: ""})
+	_ = m4
+	st.SetNeedsHuman(ch.ID, "q")
+	if err := st.Reopen(ch.ID); err != nil {
+		t.Fatal(err)
+	}
+	a2, _ := st.GetAuto(ch.ID)
+	if a2.Resolved || a2.Paused || a2.NeedsHumanQ != "" || a2.RoundCount != 0 {
+		t.Fatalf("reopen 后状态错: %+v", a2)
+	}
+	// mode
+	if err := st.SetMode(ch.ID, "autopilot"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetMode(ch.ID, "bogus"); err == nil {
+		t.Fatal("非法 mode 应报错")
+	}
+	a3, _ := st.GetAuto(ch.ID)
+	if a3.Mode != "autopilot" {
+		t.Fatalf("mode 未生效: %+v", a3)
+	}
+	// close
+	st.CloseChannel(ch.ID)
+	if ok, reason, _ := st.RequestTurn(ch.ID); ok || !strings.Contains(reason, "关闭") {
+		t.Fatal("关闭后 turn 必须拒")
+	}
+	// settings
+	st.SetSetting("local.default_mode", "autopilot")
+	if v, _ := st.GetSetting("local.default_mode"); v != "autopilot" {
+		t.Fatal("settings 读写错")
+	}
+	if v, _ := st.GetSetting("nope"); v != "" {
+		t.Fatal("缺省应空")
+	}
+}
+
+func TestCapHitTurnsToHuman(t *testing.T) {
+	st, ch, a, b := seedDuo(t)
+	st.SetAutoEnabled(ch.ID, true, 2)
+	st.SaveMessageOpts(ch.ID, a.ID, []int64{b.ID}, "claude 立场", "x", "", SaveOpts{})
+	st.SaveMessageOpts(ch.ID, b.ID, []int64{a.ID}, "codex 立场", "y", "", SaveOpts{})
+	st.RequestTurn(ch.ID)
+	st.RequestTurn(ch.ID)
+	if ok, _, _ := st.RequestTurn(ch.ID); ok {
+		t.Fatal("到 cap 应拒")
+	}
+	a1, _ := st.GetAuto(ch.ID)
+	if !strings.Contains(a1.NeedsHumanQ, "回合上限") || !strings.Contains(a1.NeedsHumanQ, "claude 立场") || !strings.Contains(a1.NeedsHumanQ, "codex 立场") {
+		t.Fatalf("到 cap 应转人并摆出双方立场: %q", a1.NeedsHumanQ)
+	}
+}
+
+func TestInFlight(t *testing.T) {
+	st, ch, a, b := seedDuo(t)
+	if s, _ := st.GetAuto(ch.ID); s.InFlight {
+		t.Fatal("空频道不在途")
+	}
+	m, _ := st.SaveMessageOpts(ch.ID, a.ID, []int64{b.ID}, "s", "x", "", SaveOpts{})
+	if s, _ := st.GetAuto(ch.ID); !s.InFlight {
+		t.Fatal("未读时应在途")
+	}
+	st.MarkRead(m.ID, b.ID)
+	if s, _ := st.GetAuto(ch.ID); s.InFlight {
+		t.Fatal("已读后不在途")
 	}
 }
