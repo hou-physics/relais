@@ -609,9 +609,11 @@ func TestIdempotentSend(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			m, err := st.SaveMessageOpts(ch.ID, u.ID, nil, "s", "b", "", SaveOpts{IdemKey: "race"})
-			if err == nil {
-				ids <- m.ID
+			if err != nil {
+				t.Errorf("并发同 key 不应报错: %v", err)
+				return
 			}
+			ids <- m.ID
 		}()
 	}
 	wg.Wait()
@@ -622,6 +624,48 @@ func TestIdempotentSend(t *testing.T) {
 	}
 	if len(seen) != 1 {
 		t.Fatalf("并发同 key 应恰好一条，得到 %d", len(seen))
+	}
+}
+
+// 回归：WAL 下 deferred 事务先读后写，并发发送会 database is locked（需 _txlock=immediate）。
+func TestConcurrentSaveMessage(t *testing.T) {
+	st := testStore(t)
+	u, _ := st.CreateUser("a", "a", "pw")
+	ch, _ := st.CreateChannel("c")
+	st.AddMember(ch.ID, u.ID)
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	seqs := map[int]bool{}
+	var errs []error
+	for i := 0; i < 40; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			m, err := st.SaveMessage(ch.ID, u.ID, nil, "s", "b", "")
+			mu.Lock()
+			defer mu.Unlock()
+			if err != nil {
+				errs = append(errs, err)
+				return
+			}
+			seqs[m.Seq] = true
+		}()
+	}
+	wg.Wait()
+	if len(errs) > 0 {
+		t.Fatalf("并发发送出错 %d 次，首个: %v", len(errs), errs[0])
+	}
+	if len(seqs) != 40 {
+		t.Fatalf("应有 40 个不同 seq，得到 %d", len(seqs))
+	}
+	for i := 1; i <= 40; i++ {
+		if !seqs[i] {
+			t.Fatalf("缺 seq %d", i)
+		}
+	}
+	list, _ := st.ListEnvelopes(ch.ID, u.ID, true, false)
+	if len(list) != 40 {
+		t.Fatalf("应有 40 条消息，得到 %d", len(list))
 	}
 }
 
@@ -692,6 +736,28 @@ func TestHandshakeRejects(t *testing.T) {
 	m5, _ := st.SaveMessageOpts(ch.ID, a.ID, []int64{b.ID}, "s", "X", "", SaveOpts{Kind: "resolved", Owner: "codex"})
 	if r, _ := st.EvaluateHandshake(ch.ID, m5.ID); r != HandshakeNone {
 		t.Fatal("无 ack_of 不握手")
+	}
+}
+
+// 陈旧 ack_of：上一话题已握手（M2 改写为 conclusion），之后对旧 M1 的 ack 不得凑成握手。
+func TestHandshakeRejectsStaleAck(t *testing.T) {
+	st, ch, a, b := seedDuo(t)
+	m1, _ := st.SaveMessageOpts(ch.ID, a.ID, []int64{b.ID}, "s", "X", "", SaveOpts{Kind: "resolved", Owner: "codex"})
+	m2, _ := st.SaveMessageOpts(ch.ID, b.ID, []int64{a.ID}, "s", "X", "", SaveOpts{Kind: "resolved", Owner: "codex", AckOf: m1.ID})
+	if r, _ := st.EvaluateHandshake(ch.ID, m2.ID); r != HandshakeDone {
+		t.Fatalf("话题 1 应握手: %v", r)
+	}
+	if _, err := st.Kickoff(ch.ID, a.ID); err != nil {
+		t.Fatal(err)
+	}
+	st.ClearKickedOff(ch.ID)
+	m3, _ := st.SaveMessageOpts(ch.ID, b.ID, []int64{a.ID}, "s", "Y", "", SaveOpts{Kind: "resolved", Owner: "codex", AckOf: m1.ID})
+	if r, _ := st.EvaluateHandshake(ch.ID, m3.ID); r != HandshakeNone {
+		t.Fatalf("陈旧 ack_of 不应握手: %v", r)
+	}
+	a1, _ := st.GetAuto(ch.ID)
+	if a1.Resolved {
+		t.Fatalf("不应进入 resolved: %+v", a1)
 	}
 }
 

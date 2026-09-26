@@ -122,7 +122,10 @@ CREATE TABLE IF NOT EXISTS settings (
 type Store struct{ db *sql.DB }
 
 func Open(path string) (*Store, error) {
-	dsn := path + "?_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)"
+	// _txlock=immediate：SaveMessageOpts 等事务先 SELECT 再写，WAL 下 deferred 事务的
+	// 读快照过期时升级写锁会立刻失败（busy_timeout 不生效），并发发送会报 database is locked。
+	// 开事务即取写锁，让 busy_timeout 生效排队。
+	dsn := path + "?_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_txlock=immediate"
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, err
@@ -998,8 +1001,10 @@ func (s *Store) EvaluateHandshake(channelID int64, m2ID string) (HandshakeResult
 	if m1Kind != "resolved" || m1Sender == m2Sender {
 		return HandshakeNone, nil
 	}
+	// resolved 与 conclusion 都算"更新的提议"：上一个话题握手后 M2 已改写为 conclusion，
+	// 若只数 resolved，旧 M1 仍像最新提议，陈旧 ack_of 会凑出单边假握手（spec §11）。
 	var newer int
-	if err := tx.QueryRow(`SELECT COUNT(*) FROM messages WHERE channel_id=? AND kind='resolved' AND seq>? AND seq<?`, channelID, m1Seq, m2Seq).Scan(&newer); err != nil {
+	if err := tx.QueryRow(`SELECT COUNT(*) FROM messages WHERE channel_id=? AND kind IN ('resolved','conclusion') AND seq>? AND seq<?`, channelID, m1Seq, m2Seq).Scan(&newer); err != nil {
 		return HandshakeNone, err
 	}
 	if newer > 0 {
