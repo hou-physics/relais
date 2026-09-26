@@ -105,6 +105,17 @@ CREATE TABLE IF NOT EXISTS guidance (
   created_at TEXT NOT NULL,
   PRIMARY KEY (channel_id, user_id)
 );
+CREATE TABLE IF NOT EXISTS sent_keys (
+  channel_id INTEGER NOT NULL REFERENCES channels(id),
+  key TEXT NOT NULL,
+  message_id TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (channel_id, key)
+);
+CREATE TABLE IF NOT EXISTS settings (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
 `
 
 type Store struct{ db *sql.DB }
@@ -125,6 +136,22 @@ func Open(path string) (*Store, error) {
 	if _, err := db.Exec(`ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0`); err != nil &&
 		!strings.Contains(err.Error(), "duplicate column") {
 		return nil, err
+	}
+	for _, ddl := range []string{
+		`ALTER TABLE messages ADD COLUMN seq INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE messages ADD COLUMN kind TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE messages ADD COLUMN owner TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE messages ADD COLUMN owner_reason TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE messages ADD COLUMN ack_of TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE channel_auto ADD COLUMN resolved INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE channel_auto ADD COLUMN resolution_msg_id TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE channel_auto ADD COLUMN mode TEXT NOT NULL DEFAULT 'supervised'`,
+		`ALTER TABLE channel_auto ADD COLUMN kicked_off INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE channel_auto ADD COLUMN closed INTEGER NOT NULL DEFAULT 0`,
+	} {
+		if _, err := db.Exec(ddl); err != nil && !strings.Contains(err.Error(), "duplicate column") {
+			return nil, err
+		}
 	}
 	return &Store{db: db}, nil
 }
@@ -282,22 +309,69 @@ type Message struct {
 	InReplyTo     string
 	CreatedAt     time.Time
 	Unread        bool
+	Seq           int
+	Kind          string // "" | resolved | conclusion | kickoff
+	Owner         string // claude | codex | user（kind 非空时）
+	OwnerReason   string
+	AckOf         string
+}
+
+// Round 把频道序号换算成回合（一来一回 = 1）。
+func Round(seq int) int {
+	if seq <= 0 {
+		return 0
+	}
+	return (seq + 1) / 2
+}
+
+type SaveOpts struct {
+	Kind, Owner, OwnerReason, AckOf string
+	IdemKey                         string // 非空则幂等：同频道同 key 只落一条
 }
 
 func (s *Store) SaveMessage(channelID, senderID int64, toIDs []int64, summary, body, inReplyTo string) (*Message, error) {
+	return s.SaveMessageOpts(channelID, senderID, toIDs, summary, body, inReplyTo, SaveOpts{})
+}
+
+func (s *Store) SaveMessageOpts(channelID, senderID int64, toIDs []int64, summary, body, inReplyTo string, o SaveOpts) (*Message, error) {
 	id := ulid.Make().String()
 	tx, err := s.db.Begin()
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback()
+	if o.IdemKey != "" {
+		var existing string
+		err := tx.QueryRow(`SELECT message_id FROM sent_keys WHERE channel_id=? AND key=?`, channelID, o.IdemKey).Scan(&existing)
+		if err == nil {
+			tx.Rollback()
+			return s.GetMessage(existing, senderID, true)
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return nil, err
+		}
+		if _, err := tx.Exec(`INSERT INTO sent_keys (channel_id, key, message_id, created_at) VALUES (?,?,?,?)`,
+			channelID, o.IdemKey, id, now()); err != nil {
+			// 并发下另一事务先插入了同 key：让它赢
+			tx.Rollback()
+			var winner string
+			if e2 := s.db.QueryRow(`SELECT message_id FROM sent_keys WHERE channel_id=? AND key=?`, channelID, o.IdemKey).Scan(&winner); e2 == nil {
+				return s.GetMessage(winner, senderID, true)
+			}
+			return nil, err
+		}
+	}
 	createdAt := now()
 	var replyVal any
 	if inReplyTo != "" {
 		replyVal = inReplyTo
 	}
-	if _, err := tx.Exec(`INSERT INTO messages (id, channel_id, sender_id, summary, body_md, in_reply_to, created_at)
-		VALUES (?,?,?,?,?,?,?)`, id, channelID, senderID, summary, body, replyVal, createdAt); err != nil {
+	var seq int
+	if err := tx.QueryRow(`SELECT COALESCE(MAX(seq),0)+1 FROM messages WHERE channel_id=?`, channelID).Scan(&seq); err != nil {
+		return nil, err
+	}
+	if _, err := tx.Exec(`INSERT INTO messages (id, channel_id, sender_id, summary, body_md, in_reply_to, created_at, seq, kind, owner, owner_reason, ack_of)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`, id, channelID, senderID, summary, body, replyVal, createdAt, seq, o.Kind, o.Owner, o.OwnerReason, o.AckOf); err != nil {
 		return nil, err
 	}
 	for _, uid := range toIDs {
@@ -332,6 +406,7 @@ func (s *Store) recipientNames(messageID string) ([]string, error) {
 const envelopeQuery = `
 SELECT m.id, m.channel_id, m.sender_id, u.username, u.display_name, u.avatar,
        m.summary, COALESCE(m.in_reply_to,''), m.created_at,
+       m.seq, m.kind, m.owner, m.owner_reason, m.ack_of,
        EXISTS(SELECT 1 FROM recipients ru WHERE ru.message_id=m.id AND ru.user_id=?1 AND ru.read_at IS NULL)
 FROM messages m JOIN users u ON u.id=m.sender_id
 WHERE m.channel_id=?2
@@ -365,7 +440,8 @@ func (s *Store) ListEnvelopes(channelID, viewerID int64, agentKey, unreadOnly bo
 		var created string
 		var unread int
 		if err := rows.Scan(&m.ID, &m.ChannelID, &m.SenderID, &m.Sender, &m.SenderDisplay, &m.SenderAvatar,
-			&m.Summary, &m.InReplyTo, &created, &unread); err != nil {
+			&m.Summary, &m.InReplyTo, &created,
+			&m.Seq, &m.Kind, &m.Owner, &m.OwnerReason, &m.AckOf, &unread); err != nil {
 			return nil, err
 		}
 		m.CreatedAt, _ = time.Parse(time.RFC3339, created)
@@ -382,10 +458,12 @@ func (s *Store) GetMessage(id string, viewerID int64, agentKey bool) (*Message, 
 	var m Message
 	var created string
 	err := s.db.QueryRow(`SELECT m.id, m.channel_id, m.sender_id, u.username, u.display_name, u.avatar,
-		m.summary, m.body_md, COALESCE(m.in_reply_to,''), m.created_at
+		m.summary, m.body_md, COALESCE(m.in_reply_to,''), m.created_at,
+		m.seq, m.kind, m.owner, m.owner_reason, m.ack_of
 		FROM messages m JOIN users u ON u.id=m.sender_id WHERE m.id=?`, id).
 		Scan(&m.ID, &m.ChannelID, &m.SenderID, &m.Sender, &m.SenderDisplay, &m.SenderAvatar,
-			&m.Summary, &m.Body, &m.InReplyTo, &created)
+			&m.Summary, &m.Body, &m.InReplyTo, &created,
+			&m.Seq, &m.Kind, &m.Owner, &m.OwnerReason, &m.AckOf)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}

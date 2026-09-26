@@ -548,3 +548,78 @@ func TestRequestTurnConcurrency(t *testing.T) {
 		t.Fatalf("round_count 不应超过 cap: %d", st.RoundCount)
 	}
 }
+
+func TestSeqAndKindFields(t *testing.T) {
+	st := testStore(t)
+	u, _ := st.CreateUser("a", "a", "pw")
+	v, _ := st.CreateUser("b", "b", "pw")
+	ch, _ := st.CreateChannel("c")
+	st.AddMember(ch.ID, u.ID)
+	st.AddMember(ch.ID, v.ID)
+	m1, err := st.SaveMessageOpts(ch.ID, u.ID, []int64{v.ID}, "s1", "b1", "", SaveOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m2, _ := st.SaveMessageOpts(ch.ID, v.ID, []int64{u.ID}, "s2", "b2", "", SaveOpts{Kind: "resolved", Owner: "codex", OwnerReason: "因为", AckOf: m1.ID})
+	if m1.Seq != 1 || m2.Seq != 2 {
+		t.Fatalf("seq 应为 1,2: %d %d", m1.Seq, m2.Seq)
+	}
+	if m2.Kind != "resolved" || m2.Owner != "codex" || m2.OwnerReason != "因为" || m2.AckOf != m1.ID {
+		t.Fatalf("kind 字段未贯通: %+v", m2)
+	}
+	list, _ := st.ListEnvelopes(ch.ID, u.ID, false, false)
+	if len(list) != 2 || list[1].Seq != 2 || list[1].Kind != "resolved" {
+		t.Fatalf("列表应带 seq/kind: %+v", list)
+	}
+	if Round(1) != 1 || Round(2) != 1 || Round(3) != 2 || Round(0) != 0 {
+		t.Fatal("Round 计算错")
+	}
+	// 另一频道 seq 独立
+	ch2, _ := st.CreateChannel("c2")
+	st.AddMember(ch2.ID, u.ID)
+	m3, _ := st.SaveMessageOpts(ch2.ID, u.ID, nil, "x", "y", "", SaveOpts{})
+	if m3.Seq != 1 {
+		t.Fatalf("新频道 seq 应从 1 起: %d", m3.Seq)
+	}
+}
+
+func TestIdempotentSend(t *testing.T) {
+	st := testStore(t)
+	u, _ := st.CreateUser("a", "a", "pw")
+	ch, _ := st.CreateChannel("c")
+	st.AddMember(ch.ID, u.ID)
+	m1, err := st.SaveMessageOpts(ch.ID, u.ID, nil, "s", "b", "", SaveOpts{IdemKey: "k1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m2, err := st.SaveMessageOpts(ch.ID, u.ID, nil, "s", "b", "", SaveOpts{IdemKey: "k1"})
+	if err != nil || m2.ID != m1.ID {
+		t.Fatalf("同 key 应返回同一条: %v %v", err, m2)
+	}
+	m3, _ := st.SaveMessageOpts(ch.ID, u.ID, nil, "s", "b", "", SaveOpts{IdemKey: "k2"})
+	if m3.ID == m1.ID {
+		t.Fatal("不同 key 应新建")
+	}
+	// 并发同 key 恰好一条
+	var wg sync.WaitGroup
+	ids := make(chan string, 20)
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			m, err := st.SaveMessageOpts(ch.ID, u.ID, nil, "s", "b", "", SaveOpts{IdemKey: "race"})
+			if err == nil {
+				ids <- m.ID
+			}
+		}()
+	}
+	wg.Wait()
+	close(ids)
+	seen := map[string]bool{}
+	for id := range ids {
+		seen[id] = true
+	}
+	if len(seen) != 1 {
+		t.Fatalf("并发同 key 应恰好一条，得到 %d", len(seen))
+	}
+}
