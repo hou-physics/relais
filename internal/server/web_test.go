@@ -137,3 +137,22 @@ func TestAITemplateStaysInSyncAcrossFiles(t *testing.T) {
 		t.Fatalf("web/join.html 缺少 AI 模板标记行: %q", marker)
 	}
 }
+
+// TestWebAnswerResumesBeforePosting：needs-human 回答必须先 resume 再发消息；
+// 反过来 bridge 可能在两次请求之间拉到回答，auto-turn 仍见暂停而跳过，循环卡死（冒烟发现）。
+func TestWebAnswerResumesBeforePosting(t *testing.T) {
+	js, _ := webFS.ReadFile("web/app.js")
+	src := string(js)
+	start := strings.Index(src, `$("auto-answer-send")`)
+	if start < 0 {
+		t.Fatal("app.js 缺 auto-answer-send 处理器")
+	}
+	handler := src[start:]
+	if end := strings.Index(handler, "}));"); end >= 0 {
+		handler = handler[:end]
+	}
+	r, m := strings.Index(handler, "/auto/resume"), strings.Index(handler, "/messages")
+	if r < 0 || m < 0 || r > m {
+		t.Fatalf("auto-answer-send 须先调 /auto/resume 再 POST /messages（resume@%d messages@%d）", r, m)
+	}
+}

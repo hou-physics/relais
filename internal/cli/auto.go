@@ -3,6 +3,8 @@ package cli
 import (
 	"fmt"
 	"os"
+
+	"github.com/hou-physics/relais/internal/api"
 )
 
 func RunAuto(args []string) error {
@@ -118,7 +120,8 @@ func RunGuidancePull(_ []string) error {
 // humanMsgResponder：本地单人模式里人的消息（如 needs-human 的回答）同时发给两侧，
 // 若两侧都回会交叉来信、立场互换、难收敛（冒烟发现）。只让一侧接话：
 // 最近一封 agent 来信是谁写的，就由另一侧接；还没有 agent 来信时由 claude 接。
-// 不是本地侧、或触发消息来自对侧 agent（正常轮流）时返回空，不干预。
+// 接话方须在这条消息的收件人里，否则收到的一侧照常接（人只发给一侧时不能让循环空转）。
+// 不是本地侧、触发消息来自对侧 agent（正常轮流）、或查不到触发消息时返回空，不干预。
 func humanMsgResponder(c *Client, channel, me string) string {
 	from, msgID := os.Getenv("RELAIS_MSG_FROM"), os.Getenv("RELAIS_MSG_ID")
 	peer := map[string]string{"claude": "codex", "codex": "claude"}[me]
@@ -129,28 +132,36 @@ func humanMsgResponder(c *Client, channel, me string) string {
 	if err != nil {
 		return "" // 查不到就不干预，交给服务器闸门
 	}
-	limit := -1 // 只看这条人的消息之前的 agent 来信
-	for _, m := range msgs {
-		if m.ID == msgID {
-			limit = m.Seq
+	var trigger *api.Message
+	for i := range msgs {
+		if msgs[i].ID == msgID {
+			trigger = &msgs[i]
 		}
 	}
-	var lastSeq int
-	last := ""
+	if trigger == nil {
+		return ""
+	}
+	// 只看这条人的消息之前的 agent 来信
+	lastSeq, last := 0, ""
 	for _, m := range msgs {
-		if m.Seq <= 0 || (limit >= 0 && m.Seq >= limit) || (m.From != me && m.From != peer) {
+		if m.Seq >= trigger.Seq || (m.From != me && m.From != peer) {
 			continue
 		}
 		if m.Seq > lastSeq {
 			lastSeq, last = m.Seq, m.From
 		}
 	}
+	who := me
 	switch last {
 	case "":
-		return "claude"
+		who = "claude"
 	case me:
-		return peer
-	default:
-		return me
+		who = peer
 	}
+	for _, to := range trigger.To {
+		if to == who {
+			return who
+		}
+	}
+	return ""
 }
