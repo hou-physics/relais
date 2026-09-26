@@ -26,6 +26,7 @@ type outgoing struct {
 	req       api.SendRequest // To 已按默认收件人规则解析、Summary 已定（flag 或 frontmatter）
 	body      []byte          // 原始读入（草稿保护用）
 	fromStdin bool
+	idemKey   string
 }
 
 // failWithDraft 在 stdin 输入的请求失败时把原始正文落盘为本地草稿，避免内容丢失。
@@ -48,6 +49,8 @@ func prepareOutgoing(args []string, verb string) (*outgoing, error) {
 	all := fs.Bool("all", false, "发给频道内除自己外的全部成员")
 	summary := fs.String("summary", "", "给人看的摘要（必填）")
 	reply := fs.String("reply", "", "回复的消息 id")
+	kind := fs.String("kind", "", "消息类别：空或 resolved（握手提议/附和）")
+	idemKey := fs.String("idempotency-key", "", "幂等键（自动路径用；同键只落一条）")
 	if err := fs.Parse(args); err != nil {
 		return nil, err
 	}
@@ -108,26 +111,42 @@ func prepareOutgoing(args []string, verb string) (*outgoing, error) {
 		}
 	}
 
-	// 处理摘要（flag 优先于 frontmatter）
-	summaryVal := *summary
+	// 处理摘要与新字段（flag 优先于 frontmatter）
+	hdr, rest, hasHdr := msg.ExtractHeader(body)
 	bodyStr := string(body)
-	if summaryVal == "" {
-		if fmSummary, fmBody, ok := msg.ExtractSummary(body); ok {
-			summaryVal = fmSummary
-			bodyStr = fmBody
-		} else {
-			return nil, fmt.Errorf("--summary 必填（或在文件头 frontmatter 写 summary: 字段）：给人看的一两句话")
+	summaryVal := *summary
+	if hasHdr {
+		bodyStr = rest
+		if summaryVal == "" {
+			summaryVal = hdr.Summary
 		}
 	}
+	if summaryVal == "" {
+		return nil, fmt.Errorf("--summary 必填（或在文件头 frontmatter 写 summary: 字段）：给人看的一两句话")
+	}
+	kindVal := *kind
+	if kindVal == "" {
+		kindVal = hdr.Kind
+	}
+	// 在途拒绝（D37）：只对开启了自主循环的频道生效；带幂等键的重发（自动路径的重试）不受限，
+	// 否则同一封在途消息自己的幂等重试会被自己拦下。
+	if *idemKey == "" {
+		if st, err := c.AutoGet(proj.Channel); err == nil && st.Enabled && st.InFlight {
+			return nil, fmt.Errorf("频道 %q 有议题在途（上一封还没被对方读完）。并行讨论请开子频道：relais local init %s-<议题>", proj.Channel, proj.Channel)
+		}
+	}
+	req := api.SendRequest{To: recipients, Summary: summaryVal, Body: bodyStr, InReplyTo: *reply,
+		Kind: kindVal, Owner: hdr.Owner, OwnerReason: hdr.OwnerReason, AckOf: hdr.AckOf}
 
 	return &outgoing{
 		root:      root,
 		proj:      proj,
 		cfg:       cfg,
 		client:    c,
-		req:       api.SendRequest{To: recipients, Summary: summaryVal, Body: bodyStr, InReplyTo: *reply},
+		req:       req,
 		body:      body,
 		fromStdin: fromStdin,
+		idemKey:   *idemKey,
 	}, nil
 }
 
@@ -136,14 +155,15 @@ func RunSend(args []string) error {
 	if err != nil {
 		return err
 	}
-	sent, err := o.client.Send(o.proj.Channel, o.req)
+	sent, err := o.client.SendWithKey(o.proj.Channel, o.req, o.idemKey)
 	if err != nil {
 		return o.failWithDraft(fmt.Errorf("发送失败: %w", err))
 	}
 	// sent/ 副本（本地快照；事实源在服务器）
 	copyPath := filepath.Join(o.root, "relais", "sent", localName(sent.ID, sent.CreatedAt, o.cfg.Username))
 	env := msg.Envelope{ID: sent.ID, Channel: sent.Channel, From: sent.From, To: sent.To,
-		InReplyTo: sent.InReplyTo, Sent: sent.CreatedAt, Summary: sent.Summary}
+		InReplyTo: sent.InReplyTo, Sent: sent.CreatedAt, Summary: sent.Summary,
+		Seq: sent.Seq, Round: sent.Round, Kind: sent.Kind, Owner: sent.Owner, OwnerReason: sent.OwnerReason, AckOf: sent.AckOf}
 	if werr := os.WriteFile(copyPath, msg.Render(env, o.req.Body), 0o644); werr != nil {
 		fmt.Printf("已发送 → %s（频道 %s，id %s）\n", strings.Join(sent.To, ", "), sent.Channel, sent.ID)
 		fmt.Printf("警告：本地副本写入失败: %v\n", werr)

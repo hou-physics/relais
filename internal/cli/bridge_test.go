@@ -6,6 +6,9 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/hou-physics/relais/internal/api"
+	"github.com/hou-physics/relais/internal/store"
 )
 
 func TestRegistryUpsert(t *testing.T) {
@@ -123,5 +126,75 @@ func TestNotifyCommandHasNoContentInjection(t *testing.T) {
 	}
 	if !foundInEnv {
 		t.Fatalf("Message content not found in cmd.Env")
+	}
+}
+
+func TestFindProjectHonorsChannelEnv(t *testing.T) {
+	_, _, _ = setupCLITest(t, "hou", "duo")
+	_, proj, err := findProject()
+	if err != nil || proj.Channel != "duo" {
+		t.Fatalf("默认应为 config.toml 的频道: %+v %v", proj, err)
+	}
+	t.Setenv("RELAIS_CHANNEL", "trio")
+	_, proj, _ = findProject()
+	if proj.Channel != "trio" {
+		t.Fatalf("RELAIS_CHANNEL 应覆盖: %+v", proj)
+	}
+}
+
+func TestRunHookPassesChannelEnv(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "env")
+	runHook("echo \"$RELAIS_CHANNEL\" > "+marker, "/p", t.TempDir(), api.Message{ID: "1", Channel: "m9", From: "x"})
+	data, _ := os.ReadFile(marker)
+	if strings.TrimSpace(string(data)) != "m9" {
+		t.Fatalf("hook 应收到 RELAIS_CHANNEL=m9: %q", data)
+	}
+}
+
+func TestPollOnceRoutesKickoffToConclusions(t *testing.T) {
+	st, users, proj := setupCLITest(t, "hou", "duo")
+	duo, _ := st.ChannelByName("duo")
+	st.SetAutoEnabled(duo.ID, true, 16)
+	m1, _ := st.SaveMessageOpts(duo.ID, users["wu"].ID, []int64{users["hou"].ID}, "s", "结论草", "", store.SaveOpts{Kind: "resolved", Owner: "codex"})
+	m2, _ := st.SaveMessageOpts(duo.ID, users["hou"].ID, []int64{users["wu"].ID}, "s", "结论全文", "", store.SaveOpts{Kind: "resolved", Owner: "codex", AckOf: m1.ID})
+	st.EvaluateHandshake(duo.ID, m2.ID)
+	if _, err := st.Kickoff(duo.ID, users["wu"].ID); err != nil {
+		t.Fatal(err)
+	}
+	// hou 侧先把 m1 拉掉（它是发给 hou 的普通 resolved），只留 kickoff 待处理
+	st.MarkRead(m1.ID, users["hou"].ID)
+	c, _, _ := newClient()
+	marker := filepath.Join(t.TempDir(), "hook-ran")
+	n, err := pollOnce(c, []bridgeTarget{{Channel: "duo", Dir: proj}}, "touch "+marker, nil)
+	if err != nil || n != 1 {
+		t.Fatalf("应落 1 条: %d %v", n, err)
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatal("kickoff 不应触发 hook")
+	}
+	// conclusion（m2 发给 wu 的那封）在 wu 侧同样不跑 hook
+	t.Setenv("RELAIS_CONFIG_DIR", t.TempDir())
+	saveGlobal(&GlobalConfig{Server: c.Server, Token: users["wu"].AgentToken, Username: "wu"})
+	cw, _, _ := newClient()
+	wuProj := t.TempDir()
+	if n, err := pollOnce(cw, []bridgeTarget{{Channel: "duo", Dir: wuProj}}, "touch "+marker, nil); err != nil || n < 1 {
+		t.Fatalf("wu 应拉到 conclusion+kickoff: %d %v", n, err)
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatal("conclusion 不应触发 hook")
+	}
+	entries, _ := os.ReadDir(filepath.Join(proj, "relais", "conclusions"))
+	if len(entries) != 1 || !strings.HasPrefix(entries[0].Name(), "duo-") {
+		t.Fatalf("应落到 conclusions/duo-<id>.md: %v", entries)
+	}
+	data, _ := os.ReadFile(filepath.Join(proj, "relais", "conclusions", entries[0].Name()))
+	if !strings.Contains(string(data), "结论全文") || !strings.Contains(string(data), "owner: codex") || !strings.Contains(string(data), "kind: kickoff") {
+		t.Fatalf("结论文件内容错: %s", data)
+	}
+	if inbox, _ := os.ReadDir(filepath.Join(proj, "relais", "inbox")); len(inbox) != 0 {
+		t.Fatal("kickoff 不应落 inbox")
+	}
+	if err := RunConclusion(nil); err != nil {
+		t.Fatal(err)
 	}
 }

@@ -63,3 +63,23 @@ func TestExtractSummary(t *testing.T) {
 		t.Fatalf("无 summary 应整体视为正文: %q %v", body4, ok4)
 	}
 }
+
+func TestExtractHeader(t *testing.T) {
+	h, body, ok := ExtractHeader([]byte("---\nsummary: 结论\nkind: resolved\nowner: codex\nowner_reason: 熟\nack_of: 01ABC\n---\n\n正文"))
+	if !ok || h.Summary != "结论" || h.Kind != "resolved" || h.Owner != "codex" || h.OwnerReason != "熟" || h.AckOf != "01ABC" || body != "正文" {
+		t.Fatalf("header 解析错: %+v %q %v", h, body, ok)
+	}
+	if _, body, ok := ExtractHeader([]byte("纯文本")); ok || body != "纯文本" {
+		t.Fatal("无 frontmatter 应 ok=false 且原文返回")
+	}
+	env := Envelope{ID: "x", Seq: 3, Round: 2, Kind: "conclusion", Owner: "codex"}
+	out := string(Render(env, "b"))
+	for _, want := range []string{"seq: 3", "round: 2", "kind: conclusion", "owner: codex"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("Render 缺 %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(string(Render(Envelope{ID: "y"}, "b")), "kind:") {
+		t.Fatal("空字段应 omitempty")
+	}
+}

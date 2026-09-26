@@ -61,6 +61,7 @@ func runHook(hook, msgPath, dir string, m api.Message) {
 		"RELAIS_MSG_FROM="+m.From,
 		"RELAIS_MSG_SUMMARY="+m.Summary,
 		"RELAIS_MSG_ID="+m.ID,
+		"RELAIS_CHANNEL="+m.Channel,
 	)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -90,6 +91,15 @@ func pollOnce(c *Client, targets []bridgeTarget, hook string, notify func(from, 
 			fmt.Printf("[%s] 新消息 ← %s · %s\n  %s\n", tgt.Channel, envMsg.From, envMsg.Summary, path)
 			if notify != nil {
 				notify(envMsg.From, envMsg.Summary)
+			}
+			if envMsg.Kind == "kickoff" {
+				fmt.Printf("[%s] 已开工 · 承接方 %s → %s\n  在工作脑里执行：relais conclusion\n", tgt.Channel, envMsg.Owner, path)
+				continue
+			}
+			if envMsg.Kind == "conclusion" {
+				// 握手已成立的那封不需要回复（甩手模式下服务器已同时 kickoff，若跑 hook 讨论脑会对结论再回一封）
+				fmt.Printf("[%s] 已握手：%s（承接方 %s）\n", tgt.Channel, envMsg.Summary, envMsg.Owner)
+				continue
 			}
 			runHook(hook, path, tgt.Dir, envMsg)
 		}

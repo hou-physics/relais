@@ -29,6 +29,10 @@ func newClient() (*Client, *GlobalConfig, error) {
 }
 
 func (c *Client) do(method, path string, in, out any) error {
+	return c.doH(method, path, nil, in, out)
+}
+
+func (c *Client) doH(method, path string, headers map[string]string, in, out any) error {
 	var body io.Reader
 	if in != nil {
 		b, err := json.Marshal(in)
@@ -44,6 +48,9 @@ func (c *Client) do(method, path string, in, out any) error {
 	req.Header.Set("Authorization", "Bearer "+c.Token)
 	if in != nil {
 		req.Header.Set("Content-Type", "application/json")
+	}
+	for k, v := range headers {
+		req.Header.Set(k, v)
 	}
 	resp, err := c.hc.Do(req)
 	if err != nil {
@@ -94,6 +101,16 @@ func (c *Client) Message(id string) (*api.Message, error) {
 func (c *Client) Send(channel string, req api.SendRequest) (*api.Message, error) {
 	var m api.Message
 	err := c.do("POST", "/api/channels/"+url.PathEscape(channel)+"/messages", req, &m)
+	return &m, err
+}
+
+func (c *Client) SendWithKey(channel string, req api.SendRequest, idemKey string) (*api.Message, error) {
+	var m api.Message
+	var h map[string]string
+	if idemKey != "" {
+		h = map[string]string{"Idempotency-Key": idemKey}
+	}
+	err := c.doH("POST", "/api/channels/"+url.PathEscape(channel)+"/messages", h, req, &m)
 	return &m, err
 }
 

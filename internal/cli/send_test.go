@@ -155,3 +155,51 @@ func TestSendFrontmatterSummary(t *testing.T) {
 		t.Fatalf("无摘要来源应报错: %v", err)
 	}
 }
+
+func TestSendResolvedFromFrontmatterAndFlags(t *testing.T) {
+	st, users, root := setupCLITest(t, "hou", "duo")
+	duo, _ := st.ChannelByName("duo")
+	st.SetAutoEnabled(duo.ID, true, 16)
+	f := filepath.Join(root, "out.md")
+	os.WriteFile(f, []byte("---\nowner: codex\nowner_reason: 熟\nack_of: \n---\n\n完整结论"), 0o644)
+	if err := RunSend([]string{"--kind", "resolved", "--summary", "谈拢了", "--idempotency-key", "k9", f}); err != nil {
+		t.Fatal(err)
+	}
+	// 同键再发一次 → 服务器只落一条
+	if err := RunSend([]string{"--kind", "resolved", "--summary", "谈拢了", "--idempotency-key", "k9", f}); err != nil {
+		t.Fatal(err)
+	}
+	msgs, _ := st.ListEnvelopes(duo.ID, users["wu"].ID, false, false)
+	if len(msgs) != 1 || msgs[0].Kind != "resolved" || msgs[0].Owner != "codex" || msgs[0].OwnerReason != "熟" || msgs[0].Summary != "谈拢了" || msgs[0].Seq != 1 {
+		t.Fatalf("上送字段/幂等错: %+v", msgs)
+	}
+	full, _ := st.GetMessage(msgs[0].ID, users["wu"].ID, false)
+	if full.Body != "完整结论" {
+		t.Fatalf("正文应剥掉 frontmatter: %q", full.Body)
+	}
+	copies, _ := os.ReadDir(filepath.Join(root, "relais", "sent"))
+	data, _ := os.ReadFile(filepath.Join(root, "relais", "sent", copies[0].Name()))
+	if !strings.Contains(string(data), "seq: 1") || !strings.Contains(string(data), "kind: resolved") || !strings.Contains(string(data), "owner: codex") {
+		t.Fatalf("sent 副本应含 seq/kind/owner: %s", data)
+	}
+}
+
+func TestSendRejectsWhenInFlight(t *testing.T) {
+	st, _, root := setupCLITest(t, "hou", "duo")
+	duo, _ := st.ChannelByName("duo")
+	st.SetAutoEnabled(duo.ID, true, 16)
+	f := filepath.Join(root, "x.md")
+	os.WriteFile(f, []byte("hi"), 0o644)
+	if err := RunSend([]string{"--summary", "第一封", f}); err != nil {
+		t.Fatal(err)
+	}
+	err := RunSend([]string{"--summary", "第二封", f})
+	if err == nil || !strings.Contains(err.Error(), "子频道") {
+		t.Fatalf("在途应拒绝并提示子频道: %v", err)
+	}
+	// auto 未开启的频道不受限（M1 锚点行为）
+	st.SetAutoEnabled(duo.ID, false, 16)
+	if err := RunSend([]string{"--summary", "第三封", f}); err != nil {
+		t.Fatalf("auto 关闭时不应拒绝: %v", err)
+	}
+}

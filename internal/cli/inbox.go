@@ -41,7 +41,22 @@ func pullOne(c *Client, root string, envMsg api.Message) (string, error) {
 		return "", fmt.Errorf("拉取 %s 失败: %w", envMsg.ID, err)
 	}
 	env := msg.Envelope{ID: full.ID, Channel: full.Channel, From: full.From, To: full.To,
-		InReplyTo: full.InReplyTo, Sent: full.CreatedAt, Summary: full.Summary}
+		InReplyTo: full.InReplyTo, Sent: full.CreatedAt, Summary: full.Summary,
+		Seq: full.Seq, Round: full.Round, Kind: full.Kind, Owner: full.Owner, OwnerReason: full.OwnerReason, AckOf: full.AckOf}
+	if full.Kind == "kickoff" {
+		dir := filepath.Join(root, "relais", "conclusions")
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return "", err
+		}
+		path := filepath.Join(dir, fmt.Sprintf("%s-%s.md", full.Channel, full.ID))
+		if err := os.WriteFile(path, msg.Render(env, full.Body), 0o644); err != nil {
+			return "", err
+		}
+		if err := c.MarkRead(full.ID); err != nil {
+			return "", err
+		}
+		return path, nil
+	}
 	// 使用完整 ULID 而非前 10 字符以避免碰撞
 	filename := fmt.Sprintf("%s-%s-%s.md", full.CreatedAt.UTC().Format("20060102"), full.From, full.ID)
 	inboxDir := filepath.Join(root, "relais", "inbox")

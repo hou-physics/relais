@@ -126,6 +126,9 @@ func findProject() (string, *ProjectConfig, error) {
 			if _, err := toml.DecodeFile(path, &cfg); err != nil {
 				return "", nil, fmt.Errorf("项目配置 %s 解析失败: %w", path, err)
 			}
+			if ch := os.Getenv("RELAIS_CHANNEL"); ch != "" {
+				cfg.Channel = ch
+			}
 			return dir, &cfg, nil
 		}
 		parent := filepath.Dir(dir)
