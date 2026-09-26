@@ -128,9 +128,10 @@ func prepareOutgoing(args []string, verb string) (*outgoing, error) {
 	if kindVal == "" {
 		kindVal = hdr.Kind
 	}
-	// 在途拒绝（D37）：只对开启了自主循环的频道生效；带幂等键的重发（自动路径的重试）不受限，
+	// 在途拒绝（D37）：只对「发送」生效（draft 不实际发信，人还要在网页上确认，不受此限）；
+	// 只对开启了自主循环的频道生效；带幂等键的重发（自动路径的重试）不受限，
 	// 否则同一封在途消息自己的幂等重试会被自己拦下。
-	if *idemKey == "" {
+	if verb == "send" && *idemKey == "" {
 		if st, err := c.AutoGet(proj.Channel); err == nil && st.Enabled && st.InFlight {
 			return nil, fmt.Errorf("频道 %q 有议题在途（上一封还没被对方读完）。并行讨论请开子频道：relais local init %s-<议题>", proj.Channel, proj.Channel)
 		}

@@ -53,3 +53,20 @@ func TestDraftStdinDraftOnFailure(t *testing.T) {
 		t.Fatalf("失败后 stdin 正文应存草稿: %v", drafts)
 	}
 }
+
+// TestDraftNotBlockedByInFlight 草稿不实际发信（人还要在网页上确认），在途拒绝（D37）
+// 只应挡 relais send，不应挡 relais draft——即使频道自主循环开启且有未读的在途消息。
+func TestDraftNotBlockedByInFlight(t *testing.T) {
+	st, _, proj := setupCLITest(t, "hou", "duo")
+	duo, _ := st.ChannelByName("duo")
+	st.SetAutoEnabled(duo.ID, true, 16)
+	md := filepath.Join(proj, "note.md")
+	os.WriteFile(md, []byte("---\nsummary: 第一封\n---\n\nx"), 0o644)
+	if err := RunSend([]string{md}); err != nil {
+		t.Fatal(err) // 制造一条未读的在途消息
+	}
+	os.WriteFile(md, []byte("---\nsummary: 草稿\n---\n\ny"), 0o644)
+	if err := RunDraft([]string{md}); err != nil {
+		t.Fatalf("draft 不应受在途拒绝限制: %v", err)
+	}
+}
