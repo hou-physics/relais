@@ -82,7 +82,7 @@ hook 起 agent 前查 `sessions.toml`：
 - resume 失败（会话文件被清）：删条目、按首次唤醒重来一次，日志记一行。
 
 ### 4.3 权限（D40）
-Claude 侧：`--allowedTools "Read,Grep,Glob"`；Codex 侧：exec 的只读沙箱参数（实施时以 `codex exec --help` 为准记入 setup.toml）。工作目录 = 项目根。讨论脑**不改文件、不跑 git、不联网**。
+Claude 侧：`--tools "Read,Grep,Glob" --strict-mcp-config --permission-mode default`（`--allowedTools` 只是预批准，挡不住用户 settings 的 `defaultMode: "auto"`，见 D42 ⑩）；Codex 侧：`--ignore-user-config -c 'sandbox_mode="read-only"' -c 'mcp_servers={}' --disable plugins --disable apps --disable browser_use --disable computer_use`（只读沙箱管不到 MCP 工具进程；以 `codex exec --help` 为准，常量 `codexIsolation` 见 `internal/cli/localhook.go`）。工作目录 = 项目根。讨论脑**不改文件、不跑 git、不联网**。
 
 ## 5. hook（本地版）
 
