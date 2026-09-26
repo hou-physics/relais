@@ -248,3 +248,41 @@ func TestLocalHookRejectsUnknownAgent(t *testing.T) {
 		t.Fatal("本地模式只支持 claude/codex")
 	}
 }
+
+// TestLocalHookCodexExitCodeNotMasked：冒烟发现——codex 首次唤醒非零退出时，
+// 取 thread_id 的管道把 $? 覆盖成 0，hook 误报"输出格式不符"并吞掉 stderr。
+// 退出码必须如实上报（打印 stderr），且不登记会话、不发送。
+// 同时：codex 在非 git/未信任目录会直接拒跑、stdin 非终端时会读 stdin，
+// 所以两条 codex 命令都要带 --skip-git-repo-check 并从 /dev/null 读 stdin。
+func TestLocalHookCodexExitCodeNotMasked(t *testing.T) {
+	dir := t.TempDir()
+	log := filepath.Join(dir, "calls.log")
+	stubRelais := filepath.Join(dir, "relais")
+	os.WriteFile(stubRelais, []byte("#!/bin/sh\necho \"$@\" >> \""+log+"\"\ncase \"$1\" in\n  session) [ \"$2\" = get ] && printf '%s' \"${FAKE_SID:-}\";;\n  local-prompt) printf 'P';;\nesac\nexit 0\n"), 0o755)
+	stubAgent := filepath.Join(dir, "codex")
+	os.WriteFile(stubAgent, []byte("#!/bin/sh\necho 'Not inside a trusted directory' >&2\nexit 1\n"), 0o755)
+	hp, err := writeLocalHook(dir, SetupInfo{OS: "darwin", Agent: "codex", AgentPath: stubAgent, Mode: "auto"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	src, _ := os.ReadFile(hp)
+	for _, l := range strings.Split(string(src), "\n") {
+		if strings.Contains(l, `"$AGENT" exec`) && (!strings.Contains(l, "--skip-git-repo-check") || !strings.Contains(l, "< /dev/null")) {
+			t.Fatalf("codex 命令应带 --skip-git-repo-check 且 stdin 取 /dev/null: %s", l)
+		}
+	}
+	cmd := exec.Command("sh", hp)
+	cmd.Env = append(os.Environ(), "RELAIS_BIN="+stubRelais, "RELAIS_MSG_DIR="+t.TempDir(),
+		"RELAIS_MSG_ID=01X", "RELAIS_CHANNEL=m1", "FAKE_SID=")
+	b, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("hook 失败: %v %s", err, b)
+	}
+	if !strings.Contains(string(b), "agent 退出码 1") || !strings.Contains(string(b), "trusted directory") {
+		t.Fatalf("应如实上报退出码与 stderr: %s", b)
+	}
+	data, _ := os.ReadFile(log)
+	if strings.Contains(string(data), "session set") || strings.Contains(string(data), "send ") {
+		t.Fatalf("失败时不应登记会话或发送: %s", data)
+	}
+}

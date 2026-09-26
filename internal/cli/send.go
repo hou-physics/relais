@@ -105,6 +105,8 @@ func prepareOutgoing(args []string, verb string) (*outgoing, error) {
 	if len(recipients) == 0 {
 		if len(others) == 1 {
 			recipients = others // 双人频道：默认对方
+		} else if peer := localPeer(cfg.Username, others); peer != "" {
+			recipients = []string{peer} // 本地单人模式：claude/codex 两侧默认发对侧（人只在网页看，不当收件人）
 		} else {
 			return nil, fmt.Errorf("频道 %q 有 %d 名成员，请用 --to 指定收件人（成员：%s）或 --all 发全体",
 				proj.Channel, len(members), strings.Join(others, ", "))
@@ -182,4 +184,19 @@ func localName(id string, at time.Time, who string) string {
 		short = short[:10]
 	}
 	return fmt.Sprintf("%s-%s-%s.md", at.UTC().Format("20060102"), who, short)
+}
+
+// localPeer：本地单人模式（relais local init）的频道是 claude/codex/人 三成员；
+// 发信方是其中一侧 agent 且对侧在频道里时，返回对侧用户名，否则返回空。
+func localPeer(me string, others []string) string {
+	peer := map[string]string{"claude": "codex", "codex": "claude"}[me]
+	if peer == "" {
+		return ""
+	}
+	for _, o := range others {
+		if o == peer {
+			return peer
+		}
+	}
+	return ""
 }

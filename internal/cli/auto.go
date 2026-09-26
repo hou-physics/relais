@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"os"
 )
 
 func RunAuto(args []string) error {
@@ -60,9 +61,12 @@ func RunAutoTurn(_ []string) error {
 	if err != nil {
 		return err
 	}
-	c, _, err := newClient()
+	c, cfg, err := newClient()
 	if err != nil {
 		return err
+	}
+	if who := humanMsgResponder(c, proj.Channel, cfg.Username); who != "" && who != cfg.Username {
+		return fmt.Errorf("人的这条消息由 %s 侧接话，本侧不回", who)
 	}
 	tr, err := c.AutoTurn(proj.Channel)
 	if err != nil {
@@ -109,4 +113,44 @@ func RunGuidancePull(_ []string) error {
 	}
 	fmt.Print(note)
 	return nil
+}
+
+// humanMsgResponder：本地单人模式里人的消息（如 needs-human 的回答）同时发给两侧，
+// 若两侧都回会交叉来信、立场互换、难收敛（冒烟发现）。只让一侧接话：
+// 最近一封 agent 来信是谁写的，就由另一侧接；还没有 agent 来信时由 claude 接。
+// 不是本地侧、或触发消息来自对侧 agent（正常轮流）时返回空，不干预。
+func humanMsgResponder(c *Client, channel, me string) string {
+	from, msgID := os.Getenv("RELAIS_MSG_FROM"), os.Getenv("RELAIS_MSG_ID")
+	peer := map[string]string{"claude": "codex", "codex": "claude"}[me]
+	if from == "" || peer == "" || from == me || from == peer {
+		return ""
+	}
+	msgs, err := c.Envelopes(channel, false)
+	if err != nil {
+		return "" // 查不到就不干预，交给服务器闸门
+	}
+	limit := -1 // 只看这条人的消息之前的 agent 来信
+	for _, m := range msgs {
+		if m.ID == msgID {
+			limit = m.Seq
+		}
+	}
+	var lastSeq int
+	last := ""
+	for _, m := range msgs {
+		if m.Seq <= 0 || (limit >= 0 && m.Seq >= limit) || (m.From != me && m.From != peer) {
+			continue
+		}
+		if m.Seq > lastSeq {
+			lastSeq, last = m.Seq, m.From
+		}
+	}
+	switch last {
+	case "":
+		return "claude"
+	case me:
+		return peer
+	default:
+		return me
+	}
 }

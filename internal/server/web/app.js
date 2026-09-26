@@ -387,10 +387,11 @@ $("auto-answer-send").addEventListener("click", () => humanAction(async () => {
   const text = $("auto-answer").value.trim();
   if (!text) return;
   const to = members.filter((m) => m.username !== me.username).map((m) => m.username);
+  // 先 resume 再发回答：反过来的话 bridge 可能在两次请求之间拉到回答，auto-turn 仍见"暂停"而跳过，循环卡死
+  await api("/api/channels/" + encodeURIComponent(channel) + "/auto/resume", { method: "POST" });
   await api("/api/channels/" + encodeURIComponent(channel) + "/messages", {
     method: "POST", body: JSON.stringify({ to, summary: text.slice(0, 80), body_md: text }),
   });
-  await api("/api/channels/" + encodeURIComponent(channel) + "/auto/resume", { method: "POST" });
   $("auto-answer").value = "";
   refresh();
 }));

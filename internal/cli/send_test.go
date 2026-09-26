@@ -203,3 +203,29 @@ func TestSendRejectsWhenInFlight(t *testing.T) {
 		t.Fatalf("auto 关闭时不应拒绝: %v", err)
 	}
 }
+
+// 本地单人模式（M7）：频道 = claude/codex/hou 三成员；agent 侧不带 --to 默认发给对侧 agent，
+// 否则 hook 的 relais send 与工作脑开题都会被"三人频道需 --to"拦下（冒烟发现）。
+func TestSendLocalSideDefaultsToPeer(t *testing.T) {
+	st, users, proj := setupCLITest(t, "hou", "duo")
+	cl, _ := st.CreateUser("claude", "Claude 侧", "pw-c")
+	cx, _ := st.CreateUser("codex", "Codex 侧", "pw-x")
+	ch, _ := st.CreateChannel("smoke")
+	for _, u := range []*store.User{cl, cx, users["hou"]} {
+		st.AddMember(ch.ID, u.ID)
+	}
+	g, _ := loadGlobal()
+	if err := saveGlobal(&GlobalConfig{Server: g.Server, Token: cl.AgentToken, Username: "claude"}); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("RELAIS_CHANNEL", "smoke")
+	md := filepath.Join(proj, "open.md")
+	os.WriteFile(md, []byte("开题"), 0o644)
+	if err := RunSend([]string{"--summary", "开题", md}); err != nil {
+		t.Fatalf("本地侧应默认发对侧: %v", err)
+	}
+	msgs, _ := st.ListEnvelopes(ch.ID, cx.ID, true, true)
+	if len(msgs) != 1 || len(msgs[0].To) != 1 || msgs[0].To[0] != "codex" {
+		t.Fatalf("应只发给 codex: %+v", msgs)
+	}
+}

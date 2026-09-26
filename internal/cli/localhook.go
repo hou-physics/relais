@@ -9,7 +9,9 @@ import (
 // writeLocalHook 生成本地模式的五分支 hook（D36 续会话 + D40 只读 + §5 五分支）。
 // 与联网 hook（setup.go writeHook）分文件、互不影响。
 func writeLocalHook(dir string, info SetupInfo) (string, error) {
-	var agentFirst, agentResume string
+	// agentAfterFirst 紧跟在首次运行与 RC=$? 之后执行（codex 从事件流取 thread_id）；
+	// 必须排在 RC=$? 之后，否则管道的 $? 会覆盖 agent 的退出码（冒烟发现）。
+	var agentFirst, agentResume, agentAfterFirst string
 	switch info.Agent {
 	case "claude":
 		// --allowedTools/--allowed-tools 是变长参数（吃掉后面所有非 flag 词），
@@ -18,10 +20,12 @@ func writeLocalHook(dir string, info SetupInfo) (string, error) {
 		agentFirst = `"$AGENT" -p "$PROMPT" --session-id "$SID" --allowedTools "Read,Grep,Glob" > "$OUT" 2>"$ERR"`
 		agentResume = `"$AGENT" -p "$PROMPT" --resume "$SID" --allowedTools "Read,Grep,Glob" > "$OUT" 2>"$ERR"`
 	case "codex":
-		// 首次：--json 事件流进 $EV（含 thread_id），最终回复经 -o 写入 $OUT
-		agentFirst = `"$AGENT" exec --json -o "$OUT" -c 'sandbox_mode="read-only"' -C "$RELAIS_MSG_DIR" "$PROMPT" > "$EV" 2>"$ERR"` + "\n" +
-			`  SID="$(grep -o '"thread_id":"[^"]*"' "$EV" | head -1 | sed 's/.*:"//;s/"$//')"`
-		agentResume = `"$AGENT" exec resume -c 'sandbox_mode="read-only"' "$SID" "$PROMPT" > "$OUT" 2>"$ERR"`
+		// 首次：--json 事件流进 $EV（含 thread_id），最终回复经 -o 写入 $OUT。
+		// --skip-git-repo-check：codex 在非 git/未信任目录会直接拒跑（沙箱已是只读，放行无害）；
+		// < /dev/null：stdin 非终端时 codex 会读 stdin 拼进提示词，bridge 下须显式断开。
+		agentFirst = `"$AGENT" exec --skip-git-repo-check --json -o "$OUT" -c 'sandbox_mode="read-only"' -C "$RELAIS_MSG_DIR" "$PROMPT" < /dev/null > "$EV" 2>"$ERR"`
+		agentAfterFirst = `SID="$(grep -o '"thread_id":"[^"]*"' "$EV" | head -1 | sed 's/.*:"//;s/"$//')"`
+		agentResume = `"$AGENT" exec resume --skip-git-repo-check -o "$OUT" -c 'sandbox_mode="read-only"' "$SID" "$PROMPT" < /dev/null > "$EV" 2>"$ERR"`
 	default:
 		return "", fmt.Errorf("本地模式只支持 claude 或 codex，得到 %q", info.Agent)
 	}
@@ -36,6 +40,12 @@ func writeLocalHook(dir string, info SetupInfo) (string, error) {
 	newSID := `SID="$(uuidgen | tr 'A-Z' 'a-z')"`
 	if info.Agent == "codex" {
 		newSID = `SID=""` // codex 的 id 由首次运行产出
+	}
+	after := func(indent string) string {
+		if agentAfterFirst == "" {
+			return ""
+		}
+		return indent + agentAfterFirst + "\n"
 	}
 	script := "#!/bin/sh\n" +
 		"# Relais 本地模式 hook（" + info.Agent + " 侧）：续会话 + 只读 + 五分支。由 relais local init 生成。\n" +
@@ -55,6 +65,7 @@ func writeLocalHook(dir string, info SetupInfo) (string, error) {
 		"if [ -n \"$FIRST\" ]; then\n" +
 		"  " + agentFirst + "\n" +
 		"  RC=$?\n" +
+		after("  ") +
 		"else\n" +
 		"  " + agentResume + "\n" +
 		"  RC=$?\n" +
@@ -65,6 +76,7 @@ func writeLocalHook(dir string, info SetupInfo) (string, error) {
 		"    PROMPT=\"$(\"$RELAIS\" local-prompt --first)\" || { rm -f \"$OUT\" \"$ERR\" \"$EV\"; echo \"auto: 生成提示词失败，本条跳过\"; exit 0; }\n" +
 		"    " + agentFirst + "\n" +
 		"    RC=$?\n" +
+		after("    ") +
 		"  fi\n" +
 		"fi\n" +
 		"if [ $RC -ne 0 ]; then echo \"auto: agent 退出码 $RC，本条跳过\"; cat \"$ERR\"; rm -f \"$OUT\" \"$ERR\" \"$EV\"; exit 0; fi\n" +
