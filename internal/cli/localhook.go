@@ -54,7 +54,8 @@ func writeLocalHook(dir string, info SetupInfo) (string, error) {
 		"export PATH=\"" + filepath.Dir(info.AgentPath) + ":" + filepath.Dir(relais) + ":$PATH\"\n" +
 		"cd \"$RELAIS_MSG_DIR\" || exit 1\n" +
 		"# 1) 服务器闸门\n" +
-		"\"$RELAIS\" auto-turn || { echo \"auto: 已暂停/到上限/需人处理，本条不自动回复\"; exit 0; }\n" +
+		"# 被拒时打印收到的原因（如「人的这条消息由 codex 侧接话，本侧不回」），原因为空才用通用文案\n" +
+		"TURN_ERR=\"$(\"$RELAIS\" auto-turn 2>&1 >/dev/null)\" || { R=\"$(printf '%s' \"$TURN_ERR\" | sed 's/^relais 错误: *//' | head -1)\"; echo \"auto: ${R:-已暂停/到上限/需人处理，本条不自动回复}\"; exit 0; }\n" +
 		"# 2) 会话：有则续，无则新建（首次要补读历史）\n" +
 		"SID=\"$(\"$RELAIS\" session get)\"\n" +
 		"FIRST=\"\"\n" +

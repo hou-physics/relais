@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/hou-physics/relais/internal/store"
@@ -33,7 +32,7 @@ func TestAutoTurnHumanMessageOnlyOneSideReplies(t *testing.T) {
 	}
 	// 还没有 agent 来信：人开题发两侧 → claude 接，codex 不接
 	h0, _ := st.SaveMessageOpts(ch.ID, hou.ID, []int64{cl.ID, cx.ID}, "人开题", "b", "", store.SaveOpts{})
-	if err := as(cx, "hou", h0.ID); err == nil || !strings.Contains(err.Error(), "claude") {
+	if err := as(cx, "hou", h0.ID); err == nil || err.Error() != "人的这条消息由 claude 侧接话，本侧不回" {
 		t.Fatalf("无 agent 来信时 codex 不应接人的消息: %v", err)
 	}
 	if err := as(cl, "hou", h0.ID); err != nil {
@@ -43,7 +42,7 @@ func TestAutoTurnHumanMessageOnlyOneSideReplies(t *testing.T) {
 	m1, _ := st.SaveMessageOpts(ch.ID, cl.ID, []int64{cx.ID}, "开题", "b", "", store.SaveOpts{})
 	h1, _ := st.SaveMessageOpts(ch.ID, hou.ID, []int64{cl.ID, cx.ID}, "回答", "b", "", store.SaveOpts{})
 	_ = m1
-	if err := as(cl, "hou", h1.ID); err == nil || !strings.Contains(err.Error(), "codex") {
+	if err := as(cl, "hou", h1.ID); err == nil || err.Error() != "人的这条消息由 codex 侧接话，本侧不回" {
 		t.Fatalf("最近 agent 来信是 claude 写的，claude 不应再接人的消息: %v", err)
 	}
 	if err := as(cx, "hou", h1.ID); err != nil {

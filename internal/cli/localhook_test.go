@@ -286,3 +286,31 @@ func TestLocalHookCodexExitCodeNotMasked(t *testing.T) {
 		t.Fatalf("失败时不应登记会话或发送: %s", data)
 	}
 }
+
+// TestLocalHookTurnRefusalEchoesReason：auto-turn 被拒时 hook 打印收到的原因，
+// 原因为空时才退回通用文案（被仲裁跳过的一侧不应显示"已暂停"）。
+func TestLocalHookTurnRefusalEchoesReason(t *testing.T) {
+	dir := t.TempDir()
+	stubRelais := filepath.Join(dir, "relais")
+	os.WriteFile(stubRelais, []byte("#!/bin/sh\nif [ \"$1\" = auto-turn ]; then [ -n \"$FAKE_REASON\" ] && echo \"relais 错误: $FAKE_REASON\" >&2; exit 1; fi\nexit 0\n"), 0o755)
+	hp, err := writeLocalHook(dir, SetupInfo{OS: "darwin", Agent: "claude", AgentPath: "/bin/false", Mode: "auto"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := func(reason string) string {
+		cmd := exec.Command("sh", hp)
+		cmd.Env = append(os.Environ(), "RELAIS_BIN="+stubRelais, "RELAIS_MSG_DIR="+t.TempDir(), "FAKE_REASON="+reason)
+		b, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("hook 失败: %v %s", err, b)
+		}
+		return string(b)
+	}
+	got := run("人的这条消息由 codex 侧接话，本侧不回")
+	if !strings.Contains(got, "auto: 人的这条消息由 codex 侧接话，本侧不回") || strings.Contains(got, "已暂停") || strings.Contains(got, "relais 错误") {
+		t.Fatalf("应打印收到的拒绝原因: %q", got)
+	}
+	if got := run(""); !strings.Contains(got, "已暂停/到上限/需人处理") {
+		t.Fatalf("原因为空时应退回通用文案: %q", got)
+	}
+}
