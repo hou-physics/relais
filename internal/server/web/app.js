@@ -109,6 +109,12 @@ async function api(path, opts = {}) {
   return resp.status === 204 ? null : resp.json();
 }
 
+// 人的操作失败时给出可见提示并刷新状态，而不是静默的 unhandled rejection
+async function humanAction(fn) {
+  try { await fn(); } catch (e) { alert(e && e.message ? e.message : String(e)); }
+  loadAutoState();
+}
+
 function md(text) {
   return DOMPurify.sanitize(marked.parse(text || ""));
 }
@@ -348,42 +354,36 @@ async function loadAutoState() {
   state.className = cls;
 }
 
-$("auto-on").addEventListener("click", async () => {
+$("auto-on").addEventListener("click", () => humanAction(async () => {
   const cap = 2 * (parseInt($("auto-cap").value, 10) || 8);
   await api("/api/channels/" + encodeURIComponent(channel) + "/auto", { method: "POST", body: JSON.stringify({ enabled: true, cap }) });
-  loadAutoState();
-});
-$("auto-off").addEventListener("click", async () => {
+}));
+$("auto-off").addEventListener("click", () => humanAction(async () => {
   const cap = 2 * (parseInt($("auto-cap").value, 10) || 8);
   await api("/api/channels/" + encodeURIComponent(channel) + "/auto", { method: "POST", body: JSON.stringify({ enabled: false, cap }) });
-  loadAutoState();
-});
-$("auto-pause").addEventListener("click", async () => {
+}));
+$("auto-pause").addEventListener("click", () => humanAction(async () => {
   await api("/api/channels/" + encodeURIComponent(channel) + "/auto/pause", { method: "POST" });
-  loadAutoState();
-});
-$("auto-resume").addEventListener("click", async () => {
+}));
+$("auto-resume").addEventListener("click", () => humanAction(async () => {
   await api("/api/channels/" + encodeURIComponent(channel) + "/auto/resume", { method: "POST" });
-  loadAutoState();
-});
+}));
 $("auto-guide").addEventListener("click", async () => {
   const note = prompt(t("guidePrompt"));
   if (note == null || note.trim() === "") return;
   await api("/api/channels/" + encodeURIComponent(channel) + "/guidance", { method: "POST", body: JSON.stringify({ note: note.trim() }) });
 });
-$("auto-mode").addEventListener("change", async () => {
+$("auto-mode").addEventListener("change", () => humanAction(async () => {
   await api("/api/channels/" + encodeURIComponent(channel) + "/auto/mode", { method: "POST", body: JSON.stringify({ mode: $("auto-mode").value }) });
-  loadAutoState();
-});
-$("auto-kickoff").addEventListener("click", async () => {
+}));
+$("auto-kickoff").addEventListener("click", () => humanAction(async () => {
   await api("/api/channels/" + encodeURIComponent(channel) + "/auto/kickoff", { method: "POST" });
-  loadAutoState(); refresh();
-});
-$("auto-reopen").addEventListener("click", async () => {
+  refresh();
+}));
+$("auto-reopen").addEventListener("click", () => humanAction(async () => {
   await api("/api/channels/" + encodeURIComponent(channel) + "/auto/reopen", { method: "POST" });
-  loadAutoState();
-});
-$("auto-answer-send").addEventListener("click", async () => {
+}));
+$("auto-answer-send").addEventListener("click", () => humanAction(async () => {
   const text = $("auto-answer").value.trim();
   if (!text) return;
   const to = members.filter((m) => m.username !== me.username).map((m) => m.username);
@@ -392,8 +392,8 @@ $("auto-answer-send").addEventListener("click", async () => {
   });
   await api("/api/channels/" + encodeURIComponent(channel) + "/auto/resume", { method: "POST" });
   $("auto-answer").value = "";
-  loadAutoState(); refresh();
-});
+  refresh();
+}));
 
 function renderToRow() {
   const row = $("to-row");

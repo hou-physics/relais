@@ -97,7 +97,7 @@ func TestWebHasLocalModeControls(t *testing.T) {
 		}
 	}
 	js, _ := webFS.ReadFile("web/app.js")
-	for _, key := range []string{"autoResolved", "kickoff", "reopen", "modeSupervised", "modeAutopilot", "conclusionTag", "kickoffTag", "answerPh", "autoKickedOff", "autoClosed"} {
+	for _, key := range []string{"autoResolved", "kickoff", "reopen", "modeSupervised", "modeAutopilot", "conclusionTag", "kickoffTag", "answerPh", "answerSend", "autoKickedOff", "autoClosed"} {
 		if strings.Count(string(js), key+":") < 3 {
 			t.Fatalf("app.js 三语文案缺 %s（需 zh/en/de 各一）", key)
 		}
@@ -106,6 +106,11 @@ func TestWebHasLocalModeControls(t *testing.T) {
 		if !strings.Contains(string(js), s) {
 			t.Fatalf("app.js 缺 %s", s)
 		}
+	}
+	// 人的操作（开关/模式/暂停继续/开工/回答等）失败时必须给可见提示并刷新状态，
+	// 而不是让 api() 的 throw 变成静默的 unhandled rejection（按钮看起来像失灵）。
+	if strings.Count(string(js), "humanAction(") < 8 {
+		t.Fatal("app.js 里人操作的按钮监听缺少 humanAction 包裹（应至少出现 8 次：定义 + 各按钮调用）")
 	}
 	if strings.Contains(string(js), ".innerHTML = m.") || strings.Contains(string(js), ".innerHTML = st.") {
 		t.Fatal("动态数据不得拼 innerHTML")
