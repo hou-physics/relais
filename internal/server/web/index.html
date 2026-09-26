@@ -41,14 +41,24 @@
       <div id="auto-bar" hidden>
         <span id="auto-state" class="muted"></span>
         <span id="auto-off-ctl" hidden>
-          <label data-i18n="autoCap">上限回合</label>
-          <input id="auto-cap" type="number" min="1" max="50" value="6">
+          <label data-i18n="autoCap">上限（来回数）</label>
+          <input id="auto-cap" type="number" min="1" max="50" value="8">
           <button id="auto-on" type="button" data-i18n="autoEnable">开启自主对话</button>
         </span>
+        <select id="auto-mode" hidden>
+          <option value="supervised" data-i18n="modeSupervised">监督：握手后我确认才开工</option>
+          <option value="autopilot" data-i18n="modeAutopilot">甩手：握手即开工</option>
+        </select>
+        <button id="auto-kickoff" type="button" hidden data-i18n="kickoff">确认开工</button>
+        <button id="auto-reopen" type="button" class="ghost" hidden data-i18n="reopen">继续讨论</button>
         <button id="auto-off" type="button" class="ghost" hidden data-i18n="autoDisable">关闭自主对话</button>
         <button id="auto-pause" type="button" class="ghost" hidden data-i18n="pause">暂停</button>
         <button id="auto-resume" type="button" hidden data-i18n="resume">继续</button>
         <button id="auto-guide" type="button" class="ghost" hidden data-i18n="guideMyAgent">给我的 agent 说一句</button>
+        <div id="auto-answer-row" hidden>
+          <input id="auto-answer" data-i18n-placeholder="answerPh" placeholder="回答（以你本人身份发进频道，两侧都看到）">
+          <button id="auto-answer-send" type="button" data-i18n="answerSend">回答并继续</button>
+        </div>
       </div>
       <div id="timeline"></div>
       <form id="composer">

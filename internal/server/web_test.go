@@ -88,6 +88,30 @@ func TestI18NKeysForAdminView(t *testing.T) {
 	}
 }
 
+// TestWebHasLocalModeControls 检查本地单人模式所需的控件、三语文案键与端点调用都已接入。
+func TestWebHasLocalModeControls(t *testing.T) {
+	html, _ := webFS.ReadFile("web/index.html")
+	for _, id := range []string{`id="auto-mode"`, `id="auto-kickoff"`, `id="auto-reopen"`, `id="auto-answer"`, `id="auto-answer-send"`} {
+		if !strings.Contains(string(html), id) {
+			t.Fatalf("index.html 缺 %s", id)
+		}
+	}
+	js, _ := webFS.ReadFile("web/app.js")
+	for _, key := range []string{"autoResolved", "kickoff", "reopen", "modeSupervised", "modeAutopilot", "conclusionTag", "kickoffTag", "answerPh", "autoKickedOff", "autoClosed"} {
+		if strings.Count(string(js), key+":") < 3 {
+			t.Fatalf("app.js 三语文案缺 %s（需 zh/en/de 各一）", key)
+		}
+	}
+	for _, s := range []string{"/auto/kickoff", "/auto/reopen", "/auto/mode", `"conclusion"`, `"kickoff"`, "round_cap"} {
+		if !strings.Contains(string(js), s) {
+			t.Fatalf("app.js 缺 %s", s)
+		}
+	}
+	if strings.Contains(string(js), ".innerHTML = m.") || strings.Contains(string(js), ".innerHTML = st.") {
+		t.Fatal("动态数据不得拼 innerHTML")
+	}
+}
+
 // TestAITemplateStaysInSyncAcrossFiles 钉住 app.js 和 join.html 里各自内嵌的
 // "AI 生成消息" 格式模板，防止两份重复拷贝悄悄跑偏（发消息主页 vs. 邀请加入页
 // 各自维护一份同样的模板文本）。

@@ -22,9 +22,12 @@ const I18N = {
     members: "成员", addMember: "添加成员", addMemberPh: "已注册用户名", genInvite: "生成邀请链接",
     remove: "移除",
     pause: "暂停", resume: "继续", guideMyAgent: "给我的 agent 说一句",
-    autoRunning: "自主对话中（第 {n}/{cap} 轮）", autoPaused: "已暂停", autoNeedsYou: "需要你回答：",
-    autoOff: "自主对话：未开启", autoEnable: "开启自主对话", autoDisable: "关闭自主对话", autoCap: "上限回合",
+    autoRunning: "自主对话中（第 {n}/{cap} 回合）", autoPaused: "已暂停", autoNeedsYou: "需要你回答：",
+    autoOff: "自主对话：未开启", autoEnable: "开启自主对话", autoDisable: "关闭自主对话", autoCap: "上限（来回数）",
     guidePrompt: "给你自己的 agent 一句私下引导（对方看不到）：",
+    autoResolved: "✅ 已握手待确认：{s}（承接方 {o}）", autoKickedOff: "已开工（承接方 {o}）· 在工作脑里执行 relais conclusion", autoClosed: "频道已关闭",
+    kickoff: "确认开工", reopen: "继续讨论", modeSupervised: "监督：握手后我确认才开工", modeAutopilot: "甩手：握手即开工",
+    conclusionTag: "结论", kickoffTag: "开工", answerPh: "回答（以你本人身份发进频道，两侧都看到）", answerSend: "回答并继续",
   },
   en: {
     tagline: "Messenger between agents · human in the loop", username: "Username", password: "Password", login: "Sign in",
@@ -44,9 +47,12 @@ const I18N = {
     members: "Members", addMember: "Add member", addMemberPh: "Registered username", genInvite: "Generate invite link",
     remove: "Remove",
     pause: "Pause", resume: "Resume", guideMyAgent: "Tell my agent",
-    autoRunning: "Auto-chat running ({n}/{cap})", autoPaused: "Paused", autoNeedsYou: "Needs your answer:",
-    autoOff: "Auto-chat: off", autoEnable: "Enable auto-chat", autoDisable: "Disable", autoCap: "Round cap",
+    autoRunning: "Auto-chat running (round {n}/{cap})", autoPaused: "Paused", autoNeedsYou: "Needs your answer:",
+    autoOff: "Auto-chat: off", autoEnable: "Enable auto-chat", autoDisable: "Disable", autoCap: "Round cap (exchanges)",
     guidePrompt: "Private guidance to your own agent (the other side won't see it):",
+    autoResolved: "✅ Handshake reached, awaiting you: {s} (owner {o})", autoKickedOff: "Kicked off (owner {o}) · run relais conclusion in your work session", autoClosed: "Channel closed",
+    kickoff: "Confirm kickoff", reopen: "Keep discussing", modeSupervised: "Supervised: I confirm before kickoff", modeAutopilot: "Autopilot: kickoff on handshake",
+    conclusionTag: "Conclusion", kickoffTag: "Kickoff", answerPh: "Answer (posted as you, both sides see it)", answerSend: "Answer & resume",
   },
   de: {
     tagline: "Bote zwischen Agents · Mensch in der Schleife", username: "Benutzername", password: "Passwort", login: "Anmelden",
@@ -66,9 +72,12 @@ const I18N = {
     members: "Mitglieder", addMember: "Mitglied hinzufügen", addMemberPh: "Registrierter Benutzername", genInvite: "Einladungslink erzeugen",
     remove: "Entfernen",
     pause: "Pause", resume: "Fortsetzen", guideMyAgent: "Meinem Agent sagen",
-    autoRunning: "Auto-Chat läuft ({n}/{cap})", autoPaused: "Pausiert", autoNeedsYou: "Braucht deine Antwort:",
-    autoOff: "Auto-Chat: aus", autoEnable: "Auto-Chat aktivieren", autoDisable: "Deaktivieren", autoCap: "Rundenlimit",
+    autoRunning: "Auto-Chat läuft (Runde {n}/{cap})", autoPaused: "Pausiert", autoNeedsYou: "Braucht deine Antwort:",
+    autoOff: "Auto-Chat: aus", autoEnable: "Auto-Chat aktivieren", autoDisable: "Deaktivieren", autoCap: "Rundenlimit (Wechsel)",
     guidePrompt: "Private Anweisung an deinen Agent (die andere Seite sieht sie nicht):",
+    autoResolved: "✅ Einigung erreicht, wartet auf dich: {s} (Owner {o})", autoKickedOff: "Gestartet (Owner {o}) · relais conclusion in deiner Arbeitssitzung", autoClosed: "Kanal geschlossen",
+    kickoff: "Start bestätigen", reopen: "Weiter diskutieren", modeSupervised: "Beaufsichtigt: ich bestätige vor dem Start", modeAutopilot: "Autopilot: Start bei Einigung",
+    conclusionTag: "Fazit", kickoffTag: "Start", answerPh: "Antwort (als du selbst, beide Seiten sehen sie)", answerSend: "Antworten & fortsetzen",
   },
 };
 function detectLang() {
@@ -315,27 +324,37 @@ async function loadAutoState() {
   catch { bar.hidden = true; return; }
   bar.hidden = false;
   const on = !!st.enabled;
-  if (on) $("auto-cap").value = st.cap;          // 输入框同步真实 cap
-  $("auto-off-ctl").hidden = on;                  // 开启控件仅在 auto 关时显示
-  $("auto-off").hidden = !on;                     // 关闭按钮仅在 auto 开时显示
+  if (on) $("auto-cap").value = st.round_cap;
+  $("auto-off-ctl").hidden = on;
+  $("auto-off").hidden = !on;
   $("auto-guide").hidden = !on;
-  $("auto-pause").hidden = !on || st.paused;
-  $("auto-resume").hidden = !on || !st.paused;
-  if (!on) { $("auto-state").textContent = t("autoOff"); $("auto-state").className = "muted"; return; }
-  let text = t("autoRunning").replace("{n}", st.round_count).replace("{cap}", st.cap);
-  if (st.needs_human_q) text = "⚠️ " + t("autoNeedsYou") + " " + st.needs_human_q;
-  else if (st.paused) text = t("autoPaused");
-  $("auto-state").textContent = text;
-  $("auto-state").className = (st.needs_human_q || st.paused) ? "err" : "muted";
+  $("auto-mode").hidden = !on;
+  if (on) $("auto-mode").value = st.mode || "supervised";
+  $("auto-kickoff").hidden = !on || !st.resolved;
+  $("auto-reopen").hidden = !on || !st.resolved;
+  $("auto-pause").hidden = !on || st.paused || st.resolved;
+  $("auto-resume").hidden = !on || !st.paused || st.resolved || !!st.needs_human_q;
+  $("auto-answer-row").hidden = !on || !st.needs_human_q;
+  const state = $("auto-state");
+  if (!on) { state.textContent = t("autoOff"); state.className = "muted"; return; }
+  let text = t("autoRunning").replace("{n}", st.round).replace("{cap}", st.round_cap);
+  let cls = "muted";
+  if (st.closed) { text = t("autoClosed"); }
+  else if (st.resolved) { text = t("autoResolved").replace("{s}", st.resolution_summary || "").replace("{o}", st.owner || ""); cls = "ok"; }
+  else if (st.needs_human_q) { text = "⚠️ " + t("autoNeedsYou") + " " + st.needs_human_q; cls = "err"; }
+  else if (st.kicked_off) { text = t("autoKickedOff").replace("{o}", st.owner || ""); cls = "ok"; }
+  else if (st.paused) { text = t("autoPaused"); cls = "err"; }
+  state.textContent = text;
+  state.className = cls;
 }
 
 $("auto-on").addEventListener("click", async () => {
-  const cap = parseInt($("auto-cap").value, 10) || 6;
+  const cap = 2 * (parseInt($("auto-cap").value, 10) || 8);
   await api("/api/channels/" + encodeURIComponent(channel) + "/auto", { method: "POST", body: JSON.stringify({ enabled: true, cap }) });
   loadAutoState();
 });
 $("auto-off").addEventListener("click", async () => {
-  const cap = parseInt($("auto-cap").value, 10) || 6;
+  const cap = 2 * (parseInt($("auto-cap").value, 10) || 8);
   await api("/api/channels/" + encodeURIComponent(channel) + "/auto", { method: "POST", body: JSON.stringify({ enabled: false, cap }) });
   loadAutoState();
 });
@@ -351,6 +370,29 @@ $("auto-guide").addEventListener("click", async () => {
   const note = prompt(t("guidePrompt"));
   if (note == null || note.trim() === "") return;
   await api("/api/channels/" + encodeURIComponent(channel) + "/guidance", { method: "POST", body: JSON.stringify({ note: note.trim() }) });
+});
+$("auto-mode").addEventListener("change", async () => {
+  await api("/api/channels/" + encodeURIComponent(channel) + "/auto/mode", { method: "POST", body: JSON.stringify({ mode: $("auto-mode").value }) });
+  loadAutoState();
+});
+$("auto-kickoff").addEventListener("click", async () => {
+  await api("/api/channels/" + encodeURIComponent(channel) + "/auto/kickoff", { method: "POST" });
+  loadAutoState(); refresh();
+});
+$("auto-reopen").addEventListener("click", async () => {
+  await api("/api/channels/" + encodeURIComponent(channel) + "/auto/reopen", { method: "POST" });
+  loadAutoState();
+});
+$("auto-answer-send").addEventListener("click", async () => {
+  const text = $("auto-answer").value.trim();
+  if (!text) return;
+  const to = members.filter((m) => m.username !== me.username).map((m) => m.username);
+  await api("/api/channels/" + encodeURIComponent(channel) + "/messages", {
+    method: "POST", body: JSON.stringify({ to, summary: text.slice(0, 80), body_md: text }),
+  });
+  await api("/api/channels/" + encodeURIComponent(channel) + "/auto/resume", { method: "POST" });
+  $("auto-answer").value = "";
+  loadAutoState(); refresh();
 });
 
 function renderToRow() {
@@ -394,6 +436,13 @@ function renderMsg(m) {
   const div = document.createElement("div");
   div.className = "msg" + (m.from === me.username ? " mine" : "");
   div.dataset.id = m.id;
+  if (m.kind === "conclusion" || m.kind === "kickoff") {
+    div.classList.add(m.kind);
+    const tag = document.createElement("span");
+    tag.className = "kind-tag";
+    tag.textContent = (m.kind === "conclusion" ? t("conclusionTag") : t("kickoffTag")) + (m.owner ? " · " + m.owner : "");
+    div.append(tag);
+  }
   const head = document.createElement("div");
   head.className = "head";
   head.innerHTML = `<span class="from"></span><span class="to"></span><time></time>`;
