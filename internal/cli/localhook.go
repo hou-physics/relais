@@ -12,8 +12,11 @@ func writeLocalHook(dir string, info SetupInfo) (string, error) {
 	var agentFirst, agentResume string
 	switch info.Agent {
 	case "claude":
-		agentFirst = `"$AGENT" -p --session-id "$SID" --allowedTools "Read,Grep,Glob" "$PROMPT" > "$OUT" 2>"$ERR"`
-		agentResume = `"$AGENT" -p --resume "$SID" --allowedTools "Read,Grep,Glob" "$PROMPT" > "$OUT" 2>"$ERR"`
+		// --allowedTools/--allowed-tools 是变长参数（吃掉后面所有非 flag 词），
+		// 所以 "$PROMPT" 必须紧跟在 -p 后面，不能排在它之后，否则会被当成工具名吞掉，
+		// -p 拿不到提示词、agent 每次都非零退出。
+		agentFirst = `"$AGENT" -p "$PROMPT" --session-id "$SID" --allowedTools "Read,Grep,Glob" > "$OUT" 2>"$ERR"`
+		agentResume = `"$AGENT" -p "$PROMPT" --resume "$SID" --allowedTools "Read,Grep,Glob" > "$OUT" 2>"$ERR"`
 	case "codex":
 		// 首次：--json 事件流进 $EV（含 thread_id），最终回复经 -o 写入 $OUT
 		agentFirst = `"$AGENT" exec --json -o "$OUT" -c 'sandbox_mode="read-only"' -C "$RELAIS_MSG_DIR" "$PROMPT" > "$EV" 2>"$ERR"` + "\n" +
@@ -46,7 +49,7 @@ func writeLocalHook(dir string, info SetupInfo) (string, error) {
 		"SID=\"$(\"$RELAIS\" session get)\"\n" +
 		"FIRST=\"\"\n" +
 		"if [ -z \"$SID\" ]; then FIRST=\"--first\"; " + newSID + "; fi\n" +
-		"PROMPT=\"$(\"$RELAIS\" local-prompt $FIRST)\"\n" +
+		"PROMPT=\"$(\"$RELAIS\" local-prompt $FIRST)\" || { echo \"auto: 生成提示词失败，本条跳过\"; exit 0; }\n" +
 		"OUT=\"$(mktemp)\"; ERR=\"$(mktemp)\"; EV=\"$(mktemp)\"\n" +
 		"# 3) 起讨论脑（只读）\n" +
 		"if [ -n \"$FIRST\" ]; then\n" +
@@ -59,14 +62,14 @@ func writeLocalHook(dir string, info SetupInfo) (string, error) {
 		"    echo \"auto: 续会话失败（$SID），改为新建会话重来一次\"\n" +
 		"    \"$RELAIS\" session clear\n" +
 		"    " + newSID + "\n" +
-		"    PROMPT=\"$(\"$RELAIS\" local-prompt --first)\"\n" +
+		"    PROMPT=\"$(\"$RELAIS\" local-prompt --first)\" || { rm -f \"$OUT\" \"$ERR\" \"$EV\"; echo \"auto: 生成提示词失败，本条跳过\"; exit 0; }\n" +
 		"    " + agentFirst + "\n" +
 		"    RC=$?\n" +
 		"  fi\n" +
 		"fi\n" +
 		"if [ $RC -ne 0 ]; then echo \"auto: agent 退出码 $RC，本条跳过\"; cat \"$ERR\"; rm -f \"$OUT\" \"$ERR\" \"$EV\"; exit 0; fi\n" +
 		"[ -n \"$SID\" ] && \"$RELAIS\" session set \"$SID\"\n" +
-		"# 4) 幂等键：频道 + 源消息 + 输出内容\n" +
+		"# 4) 幂等键：源消息 id + 输出内容\n" +
 		"KEY=\"$( { printf '%s' \"$RELAIS_MSG_ID\"; cat \"$OUT\"; } | shasum -a 256 | cut -c1-16)\"\n" +
 		"# 5) 五分支（优先级：RESOLVED > NEEDS_HUMAN > --- > 跳过）\n" +
 		"if head -1 \"$OUT\" | grep -q '^RESOLVED:'; then\n" +
