@@ -97,7 +97,7 @@ func TestWebHasLocalModeControls(t *testing.T) {
 		}
 	}
 	js, _ := webFS.ReadFile("web/app.js")
-	for _, key := range []string{"autoResolved", "kickoff", "reopen", "modeSupervised", "modeAutopilot", "conclusionTag", "kickoffTag", "answerPh", "answerSend", "autoKickedOff", "autoClosed"} {
+	for _, key := range []string{"autoResolved", "kickoff", "reopen", "modeSupervised", "modeAutopilot", "conclusionTag", "kickoffTag", "answerPh", "answerSend", "autoKickedOff", "autoClosed", "reopenReason"} {
 		if strings.Count(string(js), key+":") < 3 {
 			t.Fatalf("app.js 三语文案缺 %s（需 zh/en/de 各一）", key)
 		}
@@ -111,6 +111,14 @@ func TestWebHasLocalModeControls(t *testing.T) {
 	// 而不是让 api() 的 throw 变成静默的 unhandled rejection（按钮看起来像失灵）。
 	if strings.Count(string(js), "humanAction(") < 8 {
 		t.Fatal("app.js 里人操作的按钮监听缺少 humanAction 包裹（应至少出现 8 次：定义 + 各按钮调用）")
+	}
+	// 开工提示须带频道名：多模块项目里裸 relais conclusion 会打印错的结论
+	if strings.Count(string(js), "relais conclusion {c}") < 3 || !strings.Contains(string(js), `.replace("{c}", channel)`) {
+		t.Fatal("autoKickedOff 三语文案须为 relais conclusion {c} 并替换为当前频道名")
+	}
+	// needs-human 时"继续"须仍可见（联网频道的 M5 行为），只在 resolved 时隐藏
+	if strings.Contains(string(js), `st.resolved || !!st.needs_human_q`) {
+		t.Fatal("auto-resume 不应在 needs_human_q 时隐藏")
 	}
 	if strings.Contains(string(js), ".innerHTML = m.") || strings.Contains(string(js), ".innerHTML = st.") {
 		t.Fatal("动态数据不得拼 innerHTML")
@@ -154,5 +162,26 @@ func TestWebAnswerResumesBeforePosting(t *testing.T) {
 	r, m := strings.Index(handler, "/auto/resume"), strings.Index(handler, "/messages")
 	if r < 0 || m < 0 || r > m {
 		t.Fatalf("auto-answer-send 须先调 /auto/resume 再 POST /messages（resume@%d messages@%d）", r, m)
+	}
+}
+
+// TestWebReopenPostsReason："继续讨论"须问理由，先 /auto/reopen 再以人的身份发消息，否则两侧都不醒（频道卡死）。
+func TestWebReopenPostsReason(t *testing.T) {
+	js, _ := webFS.ReadFile("web/app.js")
+	src := string(js)
+	start := strings.Index(src, `$("auto-reopen").addEventListener`)
+	if start < 0 {
+		t.Fatal("app.js 缺 auto-reopen 处理器")
+	}
+	handler := src[start:]
+	if end := strings.Index(handler, "}));"); end >= 0 {
+		handler = handler[:end]
+	}
+	if !strings.Contains(handler, `prompt(t("reopenReason"))`) {
+		t.Fatal("auto-reopen 须先问理由")
+	}
+	r, m := strings.Index(handler, "/auto/reopen"), strings.Index(handler, "/messages")
+	if r < 0 || m < 0 || r > m {
+		t.Fatalf("auto-reopen 须先调 /auto/reopen 再 POST /messages（reopen@%d messages@%d）", r, m)
 	}
 }

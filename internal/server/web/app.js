@@ -25,7 +25,8 @@ const I18N = {
     autoRunning: "自主对话中（第 {n}/{cap} 回合）", autoPaused: "已暂停", autoNeedsYou: "需要你回答：",
     autoOff: "自主对话：未开启", autoEnable: "开启自主对话", autoDisable: "关闭自主对话", autoCap: "上限（来回数）",
     guidePrompt: "给你自己的 agent 一句私下引导（对方看不到）：",
-    autoResolved: "✅ 已握手待确认：{s}（承接方 {o}）", autoKickedOff: "已开工（承接方 {o}）· 在工作脑里执行 relais conclusion", autoClosed: "频道已关闭",
+    reopenReason: "继续讨论的理由（会发进频道，两侧都看到）：",
+    autoResolved: "✅ 已握手待确认：{s}（承接方 {o}）", autoKickedOff: "已开工（承接方 {o}）· 在工作脑里执行 relais conclusion {c}", autoClosed: "频道已关闭",
     kickoff: "确认开工", reopen: "继续讨论", modeSupervised: "监督：握手后我确认才开工", modeAutopilot: "甩手：握手即开工",
     conclusionTag: "结论", kickoffTag: "开工", answerPh: "回答（以你本人身份发进频道，两侧都看到）", answerSend: "回答并继续",
   },
@@ -50,7 +51,8 @@ const I18N = {
     autoRunning: "Auto-chat running (round {n}/{cap})", autoPaused: "Paused", autoNeedsYou: "Needs your answer:",
     autoOff: "Auto-chat: off", autoEnable: "Enable auto-chat", autoDisable: "Disable", autoCap: "Round cap (exchanges)",
     guidePrompt: "Private guidance to your own agent (the other side won't see it):",
-    autoResolved: "✅ Handshake reached, awaiting you: {s} (owner {o})", autoKickedOff: "Kicked off (owner {o}) · run relais conclusion in your work session", autoClosed: "Channel closed",
+    reopenReason: "Why keep discussing? (posted to the channel, both sides see it):",
+    autoResolved: "✅ Handshake reached, awaiting you: {s} (owner {o})", autoKickedOff: "Kicked off (owner {o}) · run relais conclusion {c} in your work session", autoClosed: "Channel closed",
     kickoff: "Confirm kickoff", reopen: "Keep discussing", modeSupervised: "Supervised: I confirm before kickoff", modeAutopilot: "Autopilot: kickoff on handshake",
     conclusionTag: "Conclusion", kickoffTag: "Kickoff", answerPh: "Answer (posted as you, both sides see it)", answerSend: "Answer & resume",
   },
@@ -75,7 +77,8 @@ const I18N = {
     autoRunning: "Auto-Chat läuft (Runde {n}/{cap})", autoPaused: "Pausiert", autoNeedsYou: "Braucht deine Antwort:",
     autoOff: "Auto-Chat: aus", autoEnable: "Auto-Chat aktivieren", autoDisable: "Deaktivieren", autoCap: "Rundenlimit (Wechsel)",
     guidePrompt: "Private Anweisung an deinen Agent (die andere Seite sieht sie nicht):",
-    autoResolved: "✅ Einigung erreicht, wartet auf dich: {s} (Owner {o})", autoKickedOff: "Gestartet (Owner {o}) · relais conclusion in deiner Arbeitssitzung", autoClosed: "Kanal geschlossen",
+    reopenReason: "Warum weiter diskutieren? (wird im Kanal gepostet, beide Seiten sehen es):",
+    autoResolved: "✅ Einigung erreicht, wartet auf dich: {s} (Owner {o})", autoKickedOff: "Gestartet (Owner {o}) · relais conclusion {c} in deiner Arbeitssitzung", autoClosed: "Kanal geschlossen",
     kickoff: "Start bestätigen", reopen: "Weiter diskutieren", modeSupervised: "Beaufsichtigt: ich bestätige vor dem Start", modeAutopilot: "Autopilot: Start bei Einigung",
     conclusionTag: "Fazit", kickoffTag: "Start", answerPh: "Antwort (als du selbst, beide Seiten sehen sie)", answerSend: "Antworten & fortsetzen",
   },
@@ -339,7 +342,8 @@ async function loadAutoState() {
   $("auto-kickoff").hidden = !on || !st.resolved;
   $("auto-reopen").hidden = !on || !st.resolved;
   $("auto-pause").hidden = !on || st.paused || st.resolved;
-  $("auto-resume").hidden = !on || !st.paused || st.resolved || !!st.needs_human_q;
+  // needs-human 时"继续"与回答框并存：联网频道的人可以直接点继续（M5 行为），本地模式用回答框
+  $("auto-resume").hidden = !on || !st.paused || st.resolved;
   $("auto-answer-row").hidden = !on || !st.needs_human_q;
   const state = $("auto-state");
   if (!on) { state.textContent = t("autoOff"); state.className = "muted"; return; }
@@ -348,7 +352,7 @@ async function loadAutoState() {
   if (st.closed) { text = t("autoClosed"); }
   else if (st.resolved) { text = t("autoResolved").replace("{s}", st.resolution_summary || "").replace("{o}", st.owner || ""); cls = "ok"; }
   else if (st.needs_human_q) { text = "⚠️ " + t("autoNeedsYou") + " " + st.needs_human_q; cls = "err"; }
-  else if (st.kicked_off) { text = t("autoKickedOff").replace("{o}", st.owner || ""); cls = "ok"; }
+  else if (st.kicked_off) { text = t("autoKickedOff").replace("{o}", st.owner || "").replace("{c}", channel); cls = "ok"; }
   else if (st.paused) { text = t("autoPaused"); cls = "err"; }
   state.textContent = text;
   state.className = cls;
@@ -381,7 +385,16 @@ $("auto-kickoff").addEventListener("click", () => humanAction(async () => {
   refresh();
 }));
 $("auto-reopen").addEventListener("click", () => humanAction(async () => {
+  // reopen 之后没有在途消息，两侧都不会醒；须以人的身份把理由发进频道，接话方才会被唤醒。
+  const reason = (prompt(t("reopenReason")) || "").trim();
+  if (!reason) return;
+  const to = members.filter((m) => m.username !== me.username).map((m) => m.username);
+  // 顺序同回答框：先 reopen（清 resolved/paused）再发消息，否则 bridge 拉到消息时 auto-turn 仍见暂停
   await api("/api/channels/" + encodeURIComponent(channel) + "/auto/reopen", { method: "POST" });
+  await api("/api/channels/" + encodeURIComponent(channel) + "/messages", {
+    method: "POST", body: JSON.stringify({ to, summary: reason.slice(0, 80), body_md: reason }),
+  });
+  refresh();
 }));
 $("auto-answer-send").addEventListener("click", () => humanAction(async () => {
   const text = $("auto-answer").value.trim();
