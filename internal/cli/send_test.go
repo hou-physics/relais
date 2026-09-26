@@ -204,6 +204,36 @@ func TestSendRejectsWhenInFlight(t *testing.T) {
 	}
 }
 
+// 在途拒绝时 stdin 正文（工作脑管道送来的信）须存草稿，不能丢。
+func TestSendStdinDraftOnInFlightRefusal(t *testing.T) {
+	st, _, root := setupCLITest(t, "hou", "duo")
+	duo, _ := st.ChannelByName("duo")
+	st.SetAutoEnabled(duo.ID, true, 16)
+	f := filepath.Join(root, "x.md")
+	os.WriteFile(f, []byte("hi"), 0o644)
+	if err := RunSend([]string{"--summary", "第一封", f}); err != nil {
+		t.Fatal(err)
+	}
+	old := os.Stdin
+	r, w, _ := os.Pipe()
+	os.Stdin = r
+	w.WriteString("工作脑写好的第二封，不能丢")
+	w.Close()
+	t.Cleanup(func() { os.Stdin = old })
+	err := RunSend([]string{"--summary", "第二封", "-"})
+	if err == nil || !strings.Contains(err.Error(), "子频道") {
+		t.Fatalf("在途应拒绝并提示子频道: %v", err)
+	}
+	drafts, _ := os.ReadDir(filepath.Join(root, "relais", "drafts"))
+	if len(drafts) != 1 {
+		t.Fatalf("在途拒绝后 stdin 正文应存草稿: %v", drafts)
+	}
+	data, _ := os.ReadFile(filepath.Join(root, "relais", "drafts", drafts[0].Name()))
+	if string(data) != "工作脑写好的第二封，不能丢" {
+		t.Fatalf("草稿内容错: %q", data)
+	}
+}
+
 // 本地单人模式（M7）：频道 = claude/codex/hou 三成员；agent 侧不带 --to 默认发给对侧 agent，
 // 否则 hook 的 relais send 与工作脑开题都会被"三人频道需 --to"拦下（冒烟发现）。
 func TestSendLocalSideDefaultsToPeer(t *testing.T) {

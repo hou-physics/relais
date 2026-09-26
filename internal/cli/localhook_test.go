@@ -18,13 +18,17 @@ func TestLocalHookClaude(t *testing.T) {
 	h := string(data)
 	for _, want := range []string{
 		"auto-turn", "local-prompt", "session get", "session set", "session clear",
-		"--session-id", "--resume", `--allowedTools "Read,Grep,Glob"`, "/opt/claude",
+		"--session-id", "--resume", `--tools "Read,Grep,Glob"`, "--strict-mcp-config",
+		"--permission-mode default", "/opt/claude",
 		"RESOLVED:", "NEEDS_HUMAN:", "--kind resolved", "--idempotency-key", "needs-human",
 		"uuidgen",
 	} {
 		if !strings.Contains(h, want) {
 			t.Fatalf("claude hook 缺 %q", want)
 		}
+	}
+	if strings.Contains(h, "--allowedTools") {
+		t.Fatal("--allowedTools 只是预批准，挡不住 auto 模式，应已换成 --tools")
 	}
 	if !strings.HasPrefix(h, "#!/bin/sh\n") {
 		t.Fatal("应是 sh 脚本")
@@ -50,13 +54,18 @@ func TestLocalHookCodex(t *testing.T) {
 	}
 	data, _ := os.ReadFile(hp)
 	h := string(data)
-	for _, want := range []string{"exec resume", "--json", "thread_id", `sandbox_mode="read-only"`, "/opt/codex", "-o "} {
+	for _, want := range []string{"exec resume", "--json", "thread_id", `sandbox_mode="read-only"`, "/opt/codex", "-o ",
+		`-c 'mcp_servers={}'`, "--ignore-user-config", "--disable plugins", "--disable browser_use", "--disable computer_use"} {
 		if !strings.Contains(h, want) {
 			t.Fatalf("codex hook 缺 %q", want)
 		}
 	}
-	if strings.Contains(h, "--allowedTools") {
+	if strings.Contains(h, "--allowedTools") || strings.Contains(h, "--strict-mcp-config") {
 		t.Fatal("codex hook 不该有 claude 参数")
+	}
+	// 首次与续会话两条 codex 命令都要带隔离参数
+	if n := strings.Count(h, `-c 'mcp_servers={}'`); n < 3 {
+		t.Fatalf("首次/续会话/重建三处 codex 命令都应带 mcp_servers={}，只有 %d 处", n)
 	}
 	if out, err := exec.Command("sh", "-n", hp).CombinedOutput(); err != nil {
 		t.Fatalf("hook 语法错误: %v %s", err, out)
@@ -64,9 +73,9 @@ func TestLocalHookCodex(t *testing.T) {
 }
 
 // assertClaudeArgv 校验桩 claude 收到的完整参数：prompt 必须紧跟在 -p 后面
-// （不能被 --allowedTools 的变长解析吞掉），--allowedTools 后必须恰好是
-// "Read,Grep,Glob" 且它不是最后一个参数被 prompt 顶替（即其后要么没有参数，
-// 要么是下一个 flag，绝不能是裸词 prompt）。
+// （不能被 --tools 的变长解析吞掉），--tools 后必须恰好是 "Read,Grep,Glob"
+// 且其后不是裸词；还必须带 --strict-mcp-config 与 --permission-mode default，
+// 且不再出现 --allowedTools。
 func assertClaudeArgv(t *testing.T, argsFile, wantPrompt string) {
 	t.Helper()
 	data, err := os.ReadFile(argsFile)
@@ -74,24 +83,36 @@ func assertClaudeArgv(t *testing.T, argsFile, wantPrompt string) {
 		t.Fatalf("读取 args 失败: %v", err)
 	}
 	args := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
-	pIdx := -1
-	atIdx := -1
+	pIdx, tIdx, pmIdx := -1, -1, -1
+	strict := false
 	for i, a := range args {
 		switch a {
 		case "-p":
 			pIdx = i
-		case "--allowedTools":
-			atIdx = i
+		case "--tools":
+			tIdx = i
+		case "--permission-mode":
+			pmIdx = i
+		case "--strict-mcp-config":
+			strict = true
+		case "--allowedTools", "--allowed-tools":
+			t.Fatalf("不应再用 --allowedTools: %v", args)
 		}
 	}
 	if pIdx == -1 || pIdx+1 >= len(args) || args[pIdx+1] != wantPrompt {
 		t.Fatalf("-p 后应紧跟 prompt %q，实际参数: %v", wantPrompt, args)
 	}
-	if atIdx == -1 || atIdx+1 >= len(args) || args[atIdx+1] != "Read,Grep,Glob" {
-		t.Fatalf("--allowedTools 后应恰好是 Read,Grep,Glob，实际参数: %v", args)
+	if tIdx == -1 || tIdx+1 >= len(args) || args[tIdx+1] != "Read,Grep,Glob" {
+		t.Fatalf("--tools 后应恰好是 Read,Grep,Glob，实际参数: %v", args)
 	}
-	if atIdx+2 < len(args) && !strings.HasPrefix(args[atIdx+2], "-") {
-		t.Fatalf("--allowedTools 的值后不应紧跟裸词（prompt 不应排在其后）: %v", args)
+	if tIdx+2 < len(args) && !strings.HasPrefix(args[tIdx+2], "-") {
+		t.Fatalf("--tools 的值后不应紧跟裸词（prompt 不应排在其后）: %v", args)
+	}
+	if !strict {
+		t.Fatalf("应带 --strict-mcp-config: %v", args)
+	}
+	if pmIdx == -1 || pmIdx+1 >= len(args) || args[pmIdx+1] != "default" {
+		t.Fatalf("应带 --permission-mode default: %v", args)
 	}
 }
 

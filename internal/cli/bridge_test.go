@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -165,9 +166,19 @@ func TestPollOnceRoutesKickoffToConclusions(t *testing.T) {
 	st.MarkRead(m1.ID, users["hou"].ID)
 	c, _, _ := newClient()
 	marker := filepath.Join(t.TempDir(), "hook-ran")
+	pr, pw, _ := os.Pipe()
+	oldOut := os.Stdout
+	os.Stdout = pw
 	n, err := pollOnce(c, []bridgeTarget{{Channel: "duo", Dir: proj}}, "touch "+marker, nil)
+	pw.Close()
+	os.Stdout = oldOut
+	printed, _ := io.ReadAll(pr)
 	if err != nil || n != 1 {
 		t.Fatalf("应落 1 条: %d %v", n, err)
+	}
+	// 多模块项目里裸 relais conclusion 会打印错的结论，提示须带频道名
+	if !strings.Contains(string(printed), "relais conclusion duo") {
+		t.Fatalf("开工提示应带频道名: %s", printed)
 	}
 	if _, err := os.Stat(marker); err == nil {
 		t.Fatal("kickoff 不应触发 hook")

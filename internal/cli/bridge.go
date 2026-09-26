@@ -93,7 +93,7 @@ func pollOnce(c *Client, targets []bridgeTarget, hook string, notify func(from, 
 				notify(envMsg.From, envMsg.Summary)
 			}
 			if envMsg.Kind == "kickoff" {
-				fmt.Printf("[%s] 已开工 · 承接方 %s → %s\n  在工作脑里执行：relais conclusion\n", tgt.Channel, envMsg.Owner, path)
+				fmt.Printf("[%s] 已开工 · 承接方 %s → %s\n  在工作脑里执行：relais conclusion %s\n", tgt.Channel, envMsg.Owner, path, tgt.Channel)
 				continue
 			}
 			if envMsg.Kind == "conclusion" {

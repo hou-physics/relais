@@ -47,7 +47,7 @@ func RunAuto(args []string) error {
 			state += " · 已握手待确认：" + st.ResolutionSummary + "（承接方 " + st.Owner + "）"
 		}
 		if st.KickedOff {
-			state += " · 已开工（relais conclusion 查看）"
+			state += " · 已开工（relais conclusion " + proj.Channel + " 查看）"
 		}
 		state += " · 模式 " + st.Mode
 		fmt.Printf("频道 %q 自主状态：%s\n", proj.Channel, state)

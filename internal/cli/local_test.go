@@ -1,8 +1,10 @@
 package cli
 
 import (
+	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -126,5 +128,54 @@ func TestLocalStatusAndClose(t *testing.T) {
 	}
 	if err := RunLocal([]string{"close", "nope"}); err == nil {
 		t.Fatal("关闭不存在的频道应报错")
+	}
+}
+
+// spec §11：已存在的 server.toml 若监听非回环地址，init 必须报错，不能因"已存在不覆盖"而绕过。
+func TestLocalInitRejectsNonLoopbackExistingConfig(t *testing.T) {
+	ld := t.TempDir()
+	t.Setenv("RELAIS_LOCAL_DIR", ld)
+	sc := "listen = \"0.0.0.0:8080\"\ndata_dir = " + strconv.Quote(filepath.Join(ld, "data")) + "\nbase_url = \"http://0.0.0.0:8080\"\n"
+	if err := os.WriteFile(filepath.Join(ld, "server.toml"), []byte(sc), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err := RunLocal([]string{"init", "--claude", "/bin/echo", "--codex", "/bin/cat", "--project", t.TempDir(), "--no-service", "m1"})
+	if err == nil || !strings.Contains(err.Error(), "回环") {
+		t.Fatalf("非回环 listen 的既有 server.toml 应报错: %v", err)
+	}
+}
+
+func TestShouldInstallPlist(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "com.relais.local.serve.plist")
+	if !shouldInstallPlist(p) {
+		t.Fatal("plist 不存在时应安装")
+	}
+	os.WriteFile(p, []byte("<plist/>"), 0o644)
+	if shouldInstallPlist(p) {
+		t.Fatal("plist 已存在时应跳过（spec §3.1 已在跑则跳过）")
+	}
+}
+
+func TestLocalInitQuotesPaths(t *testing.T) {
+	ld := filepath.Join(t.TempDir(), "Application Support", "relais-local")
+	t.Setenv("RELAIS_LOCAL_DIR", ld)
+	r, w, _ := os.Pipe()
+	old := os.Stdout
+	os.Stdout = w
+	err := RunLocal([]string{"init", "--claude", "/bin/echo", "--codex", "/bin/cat", "--project", t.TempDir(), "--no-service", "m1"})
+	w.Close()
+	os.Stdout = old
+	out, _ := io.ReadAll(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"'" + filepath.Join(ld, "human.txt") + "'",
+		"relais serve --config '" + filepath.Join(ld, "server.toml") + "'",
+		"--hook '" + filepath.Join(ld, "sides", "codex", "hooks", "auto-reply.sh") + "'",
+	} {
+		if !strings.Contains(string(out), want) {
+			t.Fatalf("输出里的路径应加引号 %q:\n%s", want, out)
+		}
 	}
 }

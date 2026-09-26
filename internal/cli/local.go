@@ -92,7 +92,7 @@ func runLocalInit(args []string) error {
 		}
 	}
 	root, _ = filepath.Abs(root)
-	if !strings.HasPrefix(*listen, "127.0.0.1:") && !strings.HasPrefix(*listen, "localhost:") {
+	if !isLoopbackListen(*listen) {
 		return fmt.Errorf("本地模式只允许监听回环地址，得到 %q", *listen)
 	}
 	agents := map[string]string{"claude": *claudePath, "codex": *codexPath}
@@ -129,6 +129,10 @@ func runLocalInit(args []string) error {
 		return err
 	}
 	defer st.Close()
+	// 已有的 server.toml 同样必须只监听回环（spec §11 安全不变量），不能因"已存在就不写"而绕过
+	if !isLoopbackListen(cfg.Listen) {
+		return fmt.Errorf("%s 里的 listen = %q 不是回环地址；本地模式只允许 127.0.0.1/localhost，请改正后重跑", scPath, cfg.Listen)
+	}
 	baseURL = cfg.BaseURL
 	// 2) 身份
 	ensureUser := func(name, display string, admin bool) (*store.User, error) {
@@ -233,35 +237,71 @@ func runLocalInit(args []string) error {
 			return err
 		}
 	}
-	// 5) 常驻：serve + 两个 bridge
+	// 5) 常驻：serve + 两个 bridge（spec §3.1：已在跑则跳过——plist 已存在就不重装、不重载）
 	if !*noService {
 		relais, _ := os.Executable()
-		if _, err := installPlist("com.relais.local.serve", []string{relais, "serve", "--config", scPath}, nil); err != nil {
-			return err
+		type svc struct {
+			label string
+			args  []string
+			env   map[string]string
 		}
-		for side := range sides {
+		svcs := []svc{{"com.relais.local.serve", []string{relais, "serve", "--config", scPath}, nil}}
+		for _, side := range []string{"claude", "codex"} {
 			d := filepath.Join(ld, "sides", side)
-			if _, err := installPlist("com.relais.local.bridge."+side,
+			svcs = append(svcs, svc{"com.relais.local.bridge." + side,
 				[]string{relais, "bridge", "--interval", "5", "--hook", filepath.Join(d, "hooks", "auto-reply.sh")},
-				map[string]string{"RELAIS_CONFIG_DIR": d, "HOME": os.Getenv("HOME"), "PATH": os.Getenv("PATH")}); err != nil {
+				map[string]string{"RELAIS_CONFIG_DIR": d, "HOME": os.Getenv("HOME"), "PATH": os.Getenv("PATH")}})
+		}
+		for _, v := range svcs {
+			if !shouldInstallPlist(plistPathFor(v.label)) {
+				fmt.Printf("常驻 %s 已存在，跳过\n", v.label)
+				continue
+			}
+			if _, err := installPlist(v.label, v.args, v.env); err != nil {
 				return err
 			}
 		}
 		waitListen(*listen, 5*time.Second)
 	}
+	// 路径含空格（~/Library/Application Support），打印时一律单引号包起来，复制即可用
 	fmt.Printf(`本地模式已就绪（%s）
   网页监督台: %s   （账号 %s，密码见 %s）
   模块频道: %s
   项目目录: %s   （规矩写在 relais/RULES.md）
-  两侧配置: %s/sides/{claude,codex}
+  两侧配置: %s
 下一步：在工作脑里把议题写成第一封信 →
-  RELAIS_CONFIG_DIR=%s/sides/<你这侧> RELAIS_CHANNEL=<模块> relais send <文件>
+  RELAIS_CONFIG_DIR=%s RELAIS_CHANNEL=<模块> relais send <文件>
   （或在网页里以本人身份发第一封）
-`, ld, baseURL, localHuman, filepath.Join(ld, "human.txt"), strings.Join(modules, ", "), root, ld, ld)
+`, shq(ld), baseURL, localHuman, shq(filepath.Join(ld, "human.txt")), strings.Join(modules, ", "), shq(root),
+		shq(filepath.Join(ld, "sides"))+"/{claude,codex}", shq(filepath.Join(ld, "sides"))+"/<你这侧>")
 	if *noService {
-		fmt.Printf("未安装常驻（--no-service）。手动运行：\n  relais serve --config %s\n  RELAIS_CONFIG_DIR=%s/sides/claude relais bridge --interval 5 --hook %s/sides/claude/hooks/auto-reply.sh\n  RELAIS_CONFIG_DIR=%s/sides/codex  relais bridge --interval 5 --hook %s/sides/codex/hooks/auto-reply.sh\n", scPath, ld, ld, ld, ld)
+		fmt.Printf("未安装常驻（--no-service）。手动运行：\n  relais serve --config %s\n  RELAIS_CONFIG_DIR=%s relais bridge --interval 5 --hook %s\n  RELAIS_CONFIG_DIR=%s relais bridge --interval 5 --hook %s\n",
+			shq(scPath),
+			shq(filepath.Join(ld, "sides", "claude")), shq(filepath.Join(ld, "sides", "claude", "hooks", "auto-reply.sh")),
+			shq(filepath.Join(ld, "sides", "codex")), shq(filepath.Join(ld, "sides", "codex", "hooks", "auto-reply.sh")))
 	}
 	return nil
+}
+
+// isLoopbackListen：本地模式只允许监听回环地址（spec §11）。
+func isLoopbackListen(addr string) bool {
+	return strings.HasPrefix(addr, "127.0.0.1:") || strings.HasPrefix(addr, "localhost:")
+}
+
+// shq 把路径包成 shell 单引号字面量（路径含空格时复制粘贴仍可用）。
+func shq(p string) string {
+	return "'" + strings.ReplaceAll(p, "'", `'\''`) + "'"
+}
+
+func plistPathFor(label string) string {
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, "Library", "LaunchAgents", label+".plist")
+}
+
+// shouldInstallPlist：plist 已存在（服务已装、多半在跑）则不重装，避免重跑 init 时 bootout/重载打断正在跑的循环。
+func shouldInstallPlist(path string) bool {
+	_, err := os.Stat(path)
+	return os.IsNotExist(err)
 }
 
 func waitListen(addr string, d time.Duration) {

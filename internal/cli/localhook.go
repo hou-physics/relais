@@ -6,6 +6,11 @@ import (
 	"path/filepath"
 )
 
+// codexIsolation 是 codex 讨论脑每次调用都带的隔离参数（spec §4.3 只读）。
+// --ignore-user-config 仍用 CODEX_HOME 的登录态，只是不读 config.toml。
+const codexIsolation = `--ignore-user-config -c 'sandbox_mode="read-only"' -c 'mcp_servers={}' ` +
+	`--disable plugins --disable apps --disable browser_use --disable computer_use`
+
 // writeLocalHook 生成本地模式的五分支 hook（D36 续会话 + D40 只读 + §5 五分支）。
 // 与联网 hook（setup.go writeHook）分文件、互不影响。
 func writeLocalHook(dir string, info SetupInfo) (string, error) {
@@ -14,18 +19,22 @@ func writeLocalHook(dir string, info SetupInfo) (string, error) {
 	var agentFirst, agentResume, agentAfterFirst string
 	switch info.Agent {
 	case "claude":
-		// --allowedTools/--allowed-tools 是变长参数（吃掉后面所有非 flag 词），
-		// 所以 "$PROMPT" 必须紧跟在 -p 后面，不能排在它之后，否则会被当成工具名吞掉，
-		// -p 拿不到提示词、agent 每次都非零退出。
-		agentFirst = `"$AGENT" -p "$PROMPT" --session-id "$SID" --allowedTools "Read,Grep,Glob" > "$OUT" 2>"$ERR"`
-		agentResume = `"$AGENT" -p "$PROMPT" --resume "$SID" --allowedTools "Read,Grep,Glob" > "$OUT" 2>"$ERR"`
+		// 只读靠三件事（--allowedTools 只是"预批准"，挡不住用户 settings 里 defaultMode=auto 自动放行写工具）：
+		//   --tools 只暴露 Read/Grep/Glob（其余内置工具根本不存在）；
+		//   --strict-mcp-config 不加载任何用户/项目 MCP；
+		//   --permission-mode default 覆盖用户 settings 的 defaultMode。
+		// --tools 是变长参数（吃掉后面所有非 flag 词），所以 "$PROMPT" 必须紧跟在 -p 后面。
+		agentFirst = `"$AGENT" -p "$PROMPT" --session-id "$SID" --tools "Read,Grep,Glob" --strict-mcp-config --permission-mode default > "$OUT" 2>"$ERR"`
+		agentResume = `"$AGENT" -p "$PROMPT" --resume "$SID" --tools "Read,Grep,Glob" --strict-mcp-config --permission-mode default > "$OUT" 2>"$ERR"`
 	case "codex":
 		// 首次：--json 事件流进 $EV（含 thread_id），最终回复经 -o 写入 $OUT。
 		// --skip-git-repo-check：codex 在非 git/未信任目录会直接拒跑（沙箱已是只读，放行无害）；
 		// < /dev/null：stdin 非终端时 codex 会读 stdin 拼进提示词，bridge 下须显式断开。
-		agentFirst = `"$AGENT" exec --skip-git-repo-check --json -o "$OUT" -c 'sandbox_mode="read-only"' -C "$RELAIS_MSG_DIR" "$PROMPT" < /dev/null > "$EV" 2>"$ERR"`
+		// codexIsolation：sandbox_mode 管不到 MCP 工具进程，exec 又从不询问，所以
+		// 不加载用户 config.toml（其中的 mcp_servers / plugins），再清空 MCP、关掉插件与浏览器/电脑操控。
+		agentFirst = `"$AGENT" exec --skip-git-repo-check --json -o "$OUT" ` + codexIsolation + ` -C "$RELAIS_MSG_DIR" "$PROMPT" < /dev/null > "$EV" 2>"$ERR"`
 		agentAfterFirst = `SID="$(grep -o '"thread_id":"[^"]*"' "$EV" | head -1 | sed 's/.*:"//;s/"$//')"`
-		agentResume = `"$AGENT" exec resume --skip-git-repo-check -o "$OUT" -c 'sandbox_mode="read-only"' "$SID" "$PROMPT" < /dev/null > "$EV" 2>"$ERR"`
+		agentResume = `"$AGENT" exec resume --skip-git-repo-check -o "$OUT" ` + codexIsolation + ` "$SID" "$PROMPT" < /dev/null > "$EV" 2>"$ERR"`
 	default:
 		return "", fmt.Errorf("本地模式只支持 claude 或 codex，得到 %q", info.Agent)
 	}

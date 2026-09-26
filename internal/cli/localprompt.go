@@ -9,7 +9,8 @@ import (
 )
 
 // localPrompt 组装讨论脑一轮的提示词（D40 基线规矩 + 项目 RULES.md + 本轮信息）。
-func localPrompt(side, channel, msgPath, rules, guidance string, first bool) string {
+// humanNotes 为本侧上次发言后雇主在频道里写的话（D42 ⑦：被拒的一侧不跑 agent，下次唤醒时补上），空则不出该段。
+func localPrompt(side, channel, msgPath, rules, guidance, humanNotes string, first bool) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "你是 Relais 本地模式里「%s 侧」的讨论脑，负责频道（模块）「%s」。对方是另一个 AI（%s 侧）。你们的雇主是同一个人。\n\n",
 		side, channel, otherSide(side))
@@ -30,6 +31,11 @@ func localPrompt(side, channel, msgPath, rules, guidance string, first bool) str
 		fmt.Fprintf(&b, "这是你在本频道第一次发言。先读 relais/inbox/ 与 relais/sent/ 下信头 channel: %s 的全部往来（文件名以日期开头），再读新信。\n", channel)
 	}
 	fmt.Fprintf(&b, "新信在文件 %s。当前目录是项目根，可用只读工具查看代码。同目录下可能混有其他模块的信，只看信头 channel: %s 的。\n", msgPath, channel)
+	if strings.TrimSpace(humanNotes) != "" {
+		b.WriteString("\n## 雇主在频道里说过的话（你上次发言之后）\n")
+		b.WriteString(strings.TrimSpace(humanNotes))
+		b.WriteString("\n")
+	}
 	if strings.TrimSpace(guidance) != "" {
 		b.WriteString("\n## 雇主引导（优先遵循）\n")
 		b.WriteString(strings.TrimSpace(guidance))
@@ -71,6 +77,42 @@ func RunLocalPrompt(args []string) error {
 	}
 	rules, _ := os.ReadFile(filepath.Join(root, "relais", "RULES.md"))
 	guidance, _ := c.GuidancePull(proj.Channel) // 取不到就当空，不阻塞本轮
-	fmt.Print(localPrompt(cfg.Username, proj.Channel, msgPath, string(rules), guidance, *first))
+	notes := humanNotesSinceLastSend(c, proj.Channel, cfg.Username, os.Getenv("RELAIS_MSG_ID"))
+	fmt.Print(localPrompt(cfg.Username, proj.Channel, msgPath, string(rules), guidance, notes, *first))
 	return nil
+}
+
+// humanNotesSinceLastSend 收集本侧上次发言之后、人（既非本侧也非对侧）写进频道的消息正文，
+// 排除本轮触发的那封（它已作为"新信"交给讨论脑）与 kickoff。
+// D42 ⑦ 下人的消息只由一侧接话，另一侧被拒时不跑 agent，靠这里在下次唤醒时读到人的话。
+// 取不到就返回空，不阻塞本轮。
+func humanNotesSinceLastSend(c *Client, channel, side, triggerID string) string {
+	list, err := c.Envelopes(channel, false)
+	if err != nil {
+		return ""
+	}
+	peer := otherSide(side)
+	lastSeq := 0
+	for _, m := range list {
+		if m.From == side && m.Seq > lastSeq {
+			lastSeq = m.Seq
+		}
+	}
+	var b strings.Builder
+	for _, m := range list {
+		if m.Seq <= lastSeq || m.From == side || m.From == peer || m.ID == triggerID || m.Kind == "kickoff" {
+			continue
+		}
+		full, err := c.Message(m.ID)
+		if err != nil {
+			continue
+		}
+		fmt.Fprintf(&b, "- 第 %d 条（%s）：%s\n", m.Seq, m.From, full.Summary)
+		if body := strings.TrimSpace(full.Body); body != "" {
+			for _, line := range strings.Split(body, "\n") {
+				b.WriteString("  " + line + "\n")
+			}
+		}
+	}
+	return b.String()
 }

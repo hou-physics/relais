@@ -135,7 +135,9 @@ func prepareOutgoing(args []string, verb string) (*outgoing, error) {
 	// 否则同一封在途消息自己的幂等重试会被自己拦下。
 	if verb == "send" && *idemKey == "" {
 		if st, err := c.AutoGet(proj.Channel); err == nil && st.Enabled && st.InFlight {
-			return nil, fmt.Errorf("频道 %q 有议题在途（上一封还没被对方读完）。并行讨论请开子频道：relais local init %s-<议题>", proj.Channel, proj.Channel)
+			// stdin 正文（工作脑管道送来的信）走草稿保护，被拒也不丢
+			refused := &outgoing{root: root, body: body, fromStdin: fromStdin}
+			return nil, refused.failWithDraft(fmt.Errorf("频道 %q 有议题在途（上一封还没被对方读完）。并行讨论请开子频道：relais local init %s-<议题>", proj.Channel, proj.Channel))
 		}
 	}
 	req := api.SendRequest{To: recipients, Summary: summaryVal, Body: bodyStr, InReplyTo: *reply,
