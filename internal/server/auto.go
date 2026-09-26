@@ -23,7 +23,9 @@ func (s *Server) autoState(w http.ResponseWriter, r *http.Request, p principal) 
 		Mode: st.Mode, Resolved: st.Resolved, ResolutionMsgID: st.ResolutionMsgID, KickedOff: st.KickedOff, Closed: st.Closed,
 		InFlight: st.InFlight, Round: store.Round(st.RoundCount), RoundCap: store.Round(st.Cap)}
 	if st.ResolutionMsgID != "" {
-		if m, err := s.st.GetMessage(st.ResolutionMsgID, p.user.ID, false); err == nil {
+		// 按调用方钥匙读：agent 只能看自己是发件人/收件人的结论，否则（ErrForbidden）摘要与承接方留空，
+		// 防止三人以上频道里第三方 agent 从信封层串台。
+		if m, err := s.st.GetMessage(st.ResolutionMsgID, p.user.ID, p.agent); err == nil {
 			out.ResolutionSummary, out.Owner = m.Summary, m.Owner
 		}
 	}

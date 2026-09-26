@@ -145,7 +145,10 @@ func (s *Server) handleSend(w http.ResponseWriter, r *http.Request, p principal)
 					s.publish(ch.ID, toAPI(k, ch.Name, false))
 				}
 			}
-			m, _ = s.st.GetMessage(m.ID, p.user.ID, true) // 取回 kind=conclusion
+			// 取回 kind=conclusion；取失败时保留原 m（不能让 m 变 nil 导致 toAPI 崩溃）
+			if cm, err := s.st.GetMessage(m.ID, p.user.ID, true); err == nil {
+				m = cm
+			}
 		}
 	}
 	s.publish(ch.ID, toAPI(m, ch.Name, false))

@@ -187,3 +187,61 @@ func TestSendKindValidationAndIdempotency(t *testing.T) {
 		t.Fatalf("同 Idempotency-Key 应同 id: %q %q", a.ID, b.ID)
 	}
 }
+
+// 三人频道：hou 与 wu 握手，sun 的 agent 读 /auto 不得看到结论摘要与承接方（信封层串台），sun 本人可以。
+func TestAutoStateHidesResolutionFromNonRecipientAgent(t *testing.T) {
+	ts, _, users := newTestServer(t)
+	cookie := loginCookie(t, ts, "hou", "pw-hou")
+	humanDo(t, ts, cookie, "POST", "/api/channels/deutschapp/auto", api.AutoConfigRequest{Enabled: true, Cap: 16})
+	_, m1 := agentSend(t, ts, users["hou"].AgentToken, "deutschapp", api.SendRequest{To: []string{"wu"}, Summary: "提议", Body: "X", Kind: "resolved", Owner: "codex"})
+	_, m2 := agentSend(t, ts, users["wu"].AgentToken, "deutschapp", api.SendRequest{To: []string{"hou"}, Summary: "机密摘要", Body: "X", Kind: "resolved", Owner: "codex", AckOf: m1.ID})
+	if m2.Kind != "conclusion" {
+		t.Fatalf("应握手: %+v", m2)
+	}
+	var stt api.AutoState // 每次解码用新值：omitempty 字段不会覆盖旧值
+	json.NewDecoder(agentDo(t, ts, users["sun"].AgentToken, "GET", "/api/channels/deutschapp/auto", nil).Body).Decode(&stt)
+	if !stt.Resolved || stt.ResolutionSummary != "" || stt.Owner != "" {
+		t.Fatalf("非收件人 agent 不应看到结论摘要/承接方: %+v", stt)
+	}
+	sunCookie := loginCookie(t, ts, "sun", "pw-sun")
+	stt = api.AutoState{}
+	json.NewDecoder(humanDo(t, ts, sunCookie, "GET", "/api/channels/deutschapp/auto", nil).Body).Decode(&stt)
+	if stt.ResolutionSummary != "机密摘要" || stt.Owner != "codex" {
+		t.Fatalf("频道成员本人应看到结论: %+v", stt)
+	}
+	// 收件人 agent（hou）照常可见
+	stt = api.AutoState{}
+	json.NewDecoder(agentDo(t, ts, users["hou"].AgentToken, "GET", "/api/channels/deutschapp/auto", nil).Body).Decode(&stt)
+	if stt.ResolutionSummary != "机密摘要" {
+		t.Fatalf("收件人 agent 应看到结论: %+v", stt)
+	}
+}
+
+func TestAutoReopenAndModeValidation(t *testing.T) {
+	ts, _, users := newTestServer(t)
+	cookie := loginCookie(t, ts, "hou", "pw-hou")
+	humanDo(t, ts, cookie, "POST", "/api/channels/deutschapp/auto", api.AutoConfigRequest{Enabled: true, Cap: 16})
+	agentDo(t, ts, users["hou"].AgentToken, "POST", "/api/channels/deutschapp/auto/turn", nil) // 让 round_count 非零
+	_, m1 := agentSend(t, ts, users["hou"].AgentToken, "deutschapp", api.SendRequest{To: []string{"wu"}, Summary: "s", Body: "X", Kind: "resolved", Owner: "codex"})
+	agentSend(t, ts, users["wu"].AgentToken, "deutschapp", api.SendRequest{To: []string{"hou"}, Summary: "s", Body: "X", Kind: "resolved", Owner: "codex", AckOf: m1.ID})
+	var stt api.AutoState
+	json.NewDecoder(humanDo(t, ts, cookie, "GET", "/api/channels/deutschapp/auto", nil).Body).Decode(&stt)
+	if !stt.Resolved || !stt.Paused || stt.RoundCount == 0 {
+		t.Fatalf("握手后应 resolved+paused 且已计数: %+v", stt)
+	}
+	if r := humanDo(t, ts, cookie, "POST", "/api/channels/deutschapp/auto/reopen", nil); r.StatusCode != 204 {
+		t.Fatalf("reopen 应 204, got %d", r.StatusCode)
+	}
+	stt = api.AutoState{} // omitempty 字段不会覆盖旧值，重解码前清空
+	json.NewDecoder(humanDo(t, ts, cookie, "GET", "/api/channels/deutschapp/auto", nil).Body).Decode(&stt)
+	if stt.Resolved || stt.Paused || stt.RoundCount != 0 || stt.ResolutionMsgID != "" {
+		t.Fatalf("reopen 后应 resolved=false paused=false round_count=0: %+v", stt)
+	}
+	if r := humanDo(t, ts, cookie, "POST", "/api/channels/deutschapp/auto/mode", api.ModeRequest{Mode: "yolo"}); r.StatusCode != 400 {
+		t.Fatalf("非法 mode 应 400, got %d", r.StatusCode)
+	}
+	json.NewDecoder(humanDo(t, ts, cookie, "GET", "/api/channels/deutschapp/auto", nil).Body).Decode(&stt)
+	if stt.Mode != "supervised" {
+		t.Fatalf("非法 mode 不应改动: %+v", stt)
+	}
+}
