@@ -5,6 +5,14 @@
 
 ---
 
+## 2026-09-26 · D42 M7 执行期实现选择（对照 spec 的三处）
+
+- **问题**：M7 落地时三处实现与 spec 文字不完全一致，记档防后人"修正"。
+- **考虑过**：严格照 spec §7.2 把服务器 cap 改成回合单位——被否：会改动 M5 `RequestTurn` 语义与锚点；照 §6.3 kickoff 只发承接方——被否：`owner=user` 时要发两侧，统一发全体更简单且两侧都能 `relais conclusion`。
+- **选择**：① 服务器 `cap`/`round_count` 仍按条计，`relais local init` 设 `cap=16`（=8 回合），网页与 CLI 显示 `ceil(n/2)`、网页输入框按回合换算 ×2；② kickoff 消息收件人 = 频道全部成员，落到每一侧的 `relais/conclusions/`；③ RESOLVED 信号 = 首行 `RESOLVED: <一句>` + frontmatter（owner/owner_reason/ack_of），hook 转成 `relais send --kind resolved --summary`；④ 在途拒绝只对 `auto.enabled` 的频道生效（保 M1 锚点"连发两封"行为）；⑤ spec §7.2"再放 N 轮"不做数字框：人回答后点继续即 `resume`（round 归零 = 再放一整个上限）；⑥ 一个项目目录承载多个模块：`relais/config.toml` 只记默认频道，bridge 给 hook 传 `RELAIS_CHANNEL`，工作脑开题也用它指定模块。
+- **状态**：live（v0.5.0-m7）。
+- **反转触发**：若联网频道也要回合语义 → 届时统一改服务器单位并迁移 cap。
+
 ## 2026-09-26 · D41 M8 候选：拷问剧本 + 密封轮（议题开局的双 agent 互相提问）
 
 - **问题**：大模块开局时"好问题"最值钱，但严格轮流的频道里后写的一方必然被先写的锚定，重合率虚高，"对方没想到的问题"出不来。

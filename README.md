@@ -56,6 +56,20 @@ Hou 的 Mac                    香港 VPS                     伙伴的 Windows
 
 ⚠️ Windows：不要在 --hook 命令行里直接写 %RELAIS_MSG_*%（cmd 会在解析前展开，恶意摘要可能注入命令）；请在脚本内部读取环境变量。Unix 的 $VAR 在运行时展开、不会被二次解析，是安全的。
 
+## 本地单人模式（M7）
+
+一个人、一台 Mac，让本机的 Claude Code 与 Codex 通过 Relais 自己讨论出结论，人只做裁决。
+
+```bash
+relais local init --codex ~/.codex/plugins/.plugin-appserver/codex grammar
+RELAIS_CONFIG_DIR="$HOME/Library/Application Support/relais-local/sides/claude" relais send 第一封.md
+relais conclusion
+```
+
+第一行起本机服务、两侧身份、频道、hook 与 launchd 常驻；第二行由 Claude 侧开题（frontmatter 写 `summary`），之后两侧讨论脑按回合自动来回；谈拢后结论落到 `relais/conclusions/`，工作脑用第三行读取并开工。`relais local status` 看当前状态，`relais local close <频道>` 关闭频道。
+
+人只在三处出面：**开题**（写第一封）、**needs-human**（两侧卡住、承接方分歧或回合打满时，在网页回答，回答以本人身份进频道）、**确认开工**（监督模式下两侧 RESOLVED 握手后，在网页点"确认开工"；甩手模式握手即自动开工）。
+
 ## 消息格式
 
 发送的 Markdown 文件头用 YAML frontmatter 指定摘要（若 CLI 无 `--summary` 参数）：

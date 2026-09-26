@@ -301,3 +301,165 @@ func TestAnchorAutoGovernance(t *testing.T) {
 		t.Fatal("锚点：默认未开启的频道必须拒 turn（安全底线）")
 	}
 }
+
+func TestAnchorM7Handshake(t *testing.T) {
+	w := newWorld(t)
+	duo, _ := w.st.ChannelByName("duo")
+	w.st.SetAutoEnabled(duo.ID, true, 16)
+
+	// hou 的讨论脑提议 RESOLVED（frontmatter 走 CLI）
+	houProj := w.actAs(t, "hou", "duo")
+	md := filepath.Join(houProj, "r1.md")
+	os.WriteFile(md, []byte("---\nowner: codex\nowner_reason: 词对线一直是 codex 审\n---\n\n结论 X"), 0o644)
+	if err := cli.RunSend([]string{"--kind", "resolved", "--summary", "谈拢了：X", "--idempotency-key", "h1", md}); err != nil {
+		t.Fatalf("锚点M7-1 提议失败: %v", err)
+	}
+	// 同键重发 → 只落一条（幂等）
+	cli.RunSend([]string{"--kind", "resolved", "--summary", "谈拢了：X", "--idempotency-key", "h1", md})
+	msgs, _ := w.st.ListEnvelopes(duo.ID, w.users["wu"].ID, false, false)
+	if len(msgs) != 1 || msgs[0].Seq != 1 {
+		t.Fatalf("锚点M7-1 幂等失败: %+v", msgs)
+	}
+	m1 := msgs[0]
+	a, _ := w.st.GetAuto(duo.ID)
+	if a.Resolved || !a.InFlight {
+		t.Fatalf("锚点M7-1 单边不应握手且应在途: %+v", a)
+	}
+	// wu 侧：bridge 落盘（标已读）→ 在途解除 → 附和
+	wuProj := w.actAs(t, "wu", "duo")
+	c, _ := cli.NewClientForTest()
+	if n, err := cli.PollOnceForTest(c, "duo", wuProj); err != nil || n != 1 {
+		t.Fatalf("锚点M7-1 wu 拉取: %d %v", n, err)
+	}
+	ack := filepath.Join(wuProj, "ack.md")
+	os.WriteFile(ack, []byte("---\nowner: codex\nowner_reason: 同意\nack_of: "+m1.ID+"\n---\n\n结论 X（最终措辞）"), 0o644)
+	if err := cli.RunSend([]string{"--kind", "resolved", "--summary", "同意 X", ack}); err != nil {
+		t.Fatalf("锚点M7-1 附和失败: %v", err)
+	}
+	a, _ = w.st.GetAuto(duo.ID)
+	if !a.Resolved || !a.Paused || a.Mode != "supervised" {
+		t.Fatalf("锚点M7-1 握手后应 resolved+paused: %+v", a)
+	}
+	if ok, _, _ := w.st.RequestTurn(duo.ID); ok {
+		t.Fatal("锚点M7-1 握手后 turn 必须拒")
+	}
+	// 监督模式：agent token 不能 kickoff；人钥匙可以
+	req, _ := http.NewRequest("POST", w.ts.URL+"/api/channels/duo/auto/kickoff", nil)
+	req.Header.Set("Authorization", "Bearer "+w.users["hou"].AgentToken)
+	resp, _ := http.DefaultClient.Do(req)
+	if resp.StatusCode != 403 {
+		t.Fatalf("锚点M7-1 agent kickoff 必须 403, got %d", resp.StatusCode)
+	}
+	if _, err := w.st.Kickoff(duo.ID, w.users["hou"].ID); err != nil { // 等价于人钥匙端点（HTTP 版见 server 测试）
+		t.Fatal(err)
+	}
+	// 承接方侧 bridge 拉到 kickoff → conclusions/，不进 inbox
+	if n, err := cli.PollOnceForTest(c, "duo", wuProj); err != nil || n != 1 {
+		t.Fatalf("锚点M7-1 kickoff 拉取: %d %v", n, err)
+	}
+	concl, _ := os.ReadDir(filepath.Join(wuProj, "relais", "conclusions"))
+	if len(concl) != 1 {
+		t.Fatalf("锚点M7-1 应落 1 份结论: %v", concl)
+	}
+	data, _ := os.ReadFile(filepath.Join(wuProj, "relais", "conclusions", concl[0].Name()))
+	if !strings.Contains(string(data), "最终措辞") || !strings.Contains(string(data), "owner: codex") {
+		t.Fatalf("锚点M7-1 结论内容错: %s", data)
+	}
+	if err := cli.RunConclusion(nil); err != nil {
+		t.Fatal(err)
+	}
+	// 现实中 hou 侧 bridge 早已拉走 wu 的附和（标已读、conclusion 不跑 hook）；e2e 里手动补这一步，否则在途检查会拦新议题
+	if l, _ := w.st.ListEnvelopes(duo.ID, w.users["hou"].ID, true, true); len(l) > 0 {
+		for _, um := range l {
+			w.st.MarkRead(um.ID, w.users["hou"].ID)
+		}
+	}
+	// 开工后频道回到空闲：可开新议题，且新议题清 kicked_off
+	a, _ = w.st.GetAuto(duo.ID)
+	if a.Resolved || a.Paused || !a.KickedOff {
+		t.Fatalf("锚点M7-1 开工后状态: %+v", a)
+	}
+	os.WriteFile(ack, []byte("新议题"), 0o644)
+	if err := cli.RunSend([]string{"--summary", "新议题", ack}); err != nil {
+		t.Fatalf("锚点M7-1 开工后应能开新议题: %v", err)
+	}
+	a, _ = w.st.GetAuto(duo.ID)
+	if a.KickedOff {
+		t.Fatal("锚点M7-1 新议题应清 kicked_off")
+	}
+}
+
+func TestAnchorM7OwnerConflictAndCap(t *testing.T) {
+	w := newWorld(t)
+	duo, _ := w.st.ChannelByName("duo")
+	w.st.SetAutoEnabled(duo.ID, true, 16)
+	hou, wu := w.users["hou"], w.users["wu"]
+	m1, _ := w.st.SaveMessageOpts(duo.ID, hou.ID, []int64{wu.ID}, "s", "X", "", store.SaveOpts{Kind: "resolved", Owner: "claude", OwnerReason: "我熟"})
+	m2, _ := w.st.SaveMessageOpts(duo.ID, wu.ID, []int64{hou.ID}, "s", "X", "", store.SaveOpts{Kind: "resolved", Owner: "codex", OwnerReason: "我先做的", AckOf: m1.ID})
+	if r, _ := w.st.EvaluateHandshake(duo.ID, m2.ID); r != store.HandshakeOwnerConflict {
+		t.Fatalf("锚点M7-2 owner 分歧应升级: %v", r)
+	}
+	a, _ := w.st.GetAuto(duo.ID)
+	if a.Resolved || !strings.Contains(a.NeedsHumanQ, "承接方分歧") {
+		t.Fatalf("锚点M7-2: %+v", a)
+	}
+	// 人回答后 resume → 可继续；上限 2 条 → 第 3 次 turn 转人并摆立场
+	w.st.Reopen(duo.ID)
+	w.st.SetAutoEnabled(duo.ID, true, 2)
+	w.st.RequestTurn(duo.ID)
+	w.st.RequestTurn(duo.ID)
+	if ok, _, _ := w.st.RequestTurn(duo.ID); ok {
+		t.Fatal("锚点M7-2 到上限应拒")
+	}
+	a, _ = w.st.GetAuto(duo.ID)
+	if !strings.Contains(a.NeedsHumanQ, "回合上限") {
+		t.Fatalf("锚点M7-2 到上限应转人: %q", a.NeedsHumanQ)
+	}
+	// 关闭后一律拒
+	w.st.Reopen(duo.ID)
+	w.st.CloseChannel(duo.ID)
+	if ok, reason, _ := w.st.RequestTurn(duo.ID); ok || !strings.Contains(reason, "关闭") {
+		t.Fatal("锚点M7-2 关闭后 turn 必须拒")
+	}
+}
+
+func TestAnchorM7AutopilotAndKeyIsolation(t *testing.T) {
+	w := newWorld(t)
+	duo, _ := w.st.ChannelByName("duo")
+	w.st.SetAutoEnabled(duo.ID, true, 16)
+	w.st.SetMode(duo.ID, "autopilot")
+	hou, wu := w.users["hou"], w.users["wu"]
+	// 走 HTTP：wu 的 agent 附和 → 服务器自动 kickoff
+	m1, _ := w.st.SaveMessageOpts(duo.ID, hou.ID, []int64{wu.ID}, "s", "X", "", store.SaveOpts{Kind: "resolved", Owner: "codex"})
+	body, _ := json.Marshal(map[string]any{"to": []string{"hou"}, "summary": "同意", "body_md": "X", "kind": "resolved", "owner": "codex", "ack_of": m1.ID})
+	req, _ := http.NewRequest("POST", w.ts.URL+"/api/channels/duo/messages", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+wu.AgentToken)
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := http.DefaultClient.Do(req)
+	if resp.StatusCode != 200 {
+		t.Fatalf("锚点M7-3 附和应 200, got %d", resp.StatusCode)
+	}
+	a, _ := w.st.GetAuto(duo.ID)
+	if !a.KickedOff || a.Resolved {
+		t.Fatalf("锚点M7-3 甩手模式握手即开工: %+v", a)
+	}
+	// 钥匙隔离：agent token 打 reopen/mode → 403
+	for _, p := range []string{"/auto/reopen", "/auto/mode"} {
+		r, _ := http.NewRequest("POST", w.ts.URL+"/api/channels/duo"+p, strings.NewReader(`{"mode":"supervised"}`))
+		r.Header.Set("Authorization", "Bearer "+hou.AgentToken)
+		r.Header.Set("Content-Type", "application/json")
+		rs, _ := http.DefaultClient.Do(r)
+		if rs.StatusCode != 403 {
+			t.Fatalf("锚点M7-3 agent %s 必须 403, got %d", p, rs.StatusCode)
+		}
+	}
+	// 客户端不得自设 kickoff/conclusion
+	bad, _ := json.Marshal(map[string]any{"to": []string{"hou"}, "summary": "s", "body_md": "b", "kind": "kickoff"})
+	r2, _ := http.NewRequest("POST", w.ts.URL+"/api/channels/duo/messages", bytes.NewReader(bad))
+	r2.Header.Set("Authorization", "Bearer "+wu.AgentToken)
+	r2.Header.Set("Content-Type", "application/json")
+	rs2, _ := http.DefaultClient.Do(r2)
+	if rs2.StatusCode != 400 {
+		t.Fatalf("锚点M7-3 kind=kickoff 必须 400, got %d", rs2.StatusCode)
+	}
+}
