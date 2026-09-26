@@ -2,9 +2,11 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 
 	"github.com/hou-physics/relais/internal/api"
+	"github.com/hou-physics/relais/internal/store"
 )
 
 func (s *Server) autoState(w http.ResponseWriter, r *http.Request, p principal) {
@@ -17,8 +19,15 @@ func (s *Server) autoState(w http.ResponseWriter, r *http.Request, p principal) 
 		writeErr(w, http.StatusInternalServerError, "服务器内部错误")
 		return
 	}
-	writeJSON(w, http.StatusOK, api.AutoState{Enabled: st.Enabled, RoundCount: st.RoundCount,
-		Cap: st.Cap, Paused: st.Paused, NeedsHumanQ: st.NeedsHumanQ})
+	out := api.AutoState{Enabled: st.Enabled, RoundCount: st.RoundCount, Cap: st.Cap, Paused: st.Paused, NeedsHumanQ: st.NeedsHumanQ,
+		Mode: st.Mode, Resolved: st.Resolved, ResolutionMsgID: st.ResolutionMsgID, KickedOff: st.KickedOff, Closed: st.Closed,
+		InFlight: st.InFlight, Round: store.Round(st.RoundCount), RoundCap: store.Round(st.Cap)}
+	if st.ResolutionMsgID != "" {
+		if m, err := s.st.GetMessage(st.ResolutionMsgID, p.user.ID, false); err == nil {
+			out.ResolutionSummary, out.Owner = m.Summary, m.Owner
+		}
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (s *Server) autoConfig(w http.ResponseWriter, r *http.Request, p principal) {
@@ -120,6 +129,53 @@ func (s *Server) guidancePost(w http.ResponseWriter, r *http.Request, p principa
 	}
 	if err := s.st.SetGuidance(ch.ID, p.user.ID, req.Note); err != nil {
 		writeErr(w, http.StatusInternalServerError, "服务器内部错误")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) autoKickoff(w http.ResponseWriter, r *http.Request, p principal) {
+	if p.agent {
+		writeErr(w, http.StatusForbidden, "确认开工仅限人的钥匙")
+		return
+	}
+	ch, ok := s.channelForMember(w, r, p)
+	if !ok {
+		return
+	}
+	k, err := s.st.Kickoff(ch.ID, p.user.ID)
+	if errors.Is(err, store.ErrNotResolved) {
+		writeErr(w, http.StatusConflict, "频道尚未握手，没有可开工的结论")
+		return
+	}
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "服务器内部错误")
+		return
+	}
+	s.publish(ch.ID, toAPI(k, ch.Name, false))
+	writeJSON(w, http.StatusOK, toAPI(k, ch.Name, true))
+}
+
+func (s *Server) autoReopen(w http.ResponseWriter, r *http.Request, p principal) {
+	s.autoHumanMutate(w, r, p, func(chID int64) error { return s.st.Reopen(chID) })
+}
+
+func (s *Server) autoMode(w http.ResponseWriter, r *http.Request, p principal) {
+	if p.agent {
+		writeErr(w, http.StatusForbidden, "切换模式仅限人的钥匙")
+		return
+	}
+	ch, ok := s.channelForMember(w, r, p)
+	if !ok {
+		return
+	}
+	var req api.ModeRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "请求格式不对")
+		return
+	}
+	if err := s.st.SetMode(ch.ID, req.Mode); err != nil {
+		writeErr(w, http.StatusBadRequest, "%s", err.Error())
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

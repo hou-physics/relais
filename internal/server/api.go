@@ -14,6 +14,8 @@ func toAPI(m *store.Message, channelName string, withBody bool) api.Message {
 		ID: m.ID, Channel: channelName, From: m.Sender, FromDisplay: m.SenderDisplay, FromAvatar: m.SenderAvatar,
 		To: m.To, Summary: m.Summary, InReplyTo: m.InReplyTo, CreatedAt: m.CreatedAt, Unread: m.Unread,
 	}
+	out.Seq, out.Round = m.Seq, store.Round(m.Seq)
+	out.Kind, out.Owner, out.OwnerReason, out.AckOf = m.Kind, m.Owner, m.OwnerReason, m.AckOf
 	if withBody {
 		out.Body = m.Body
 	}
@@ -105,16 +107,48 @@ func (s *Server) handleSend(w http.ResponseWriter, r *http.Request, p principal)
 		writeErr(w, http.StatusBadRequest, "请求格式不对")
 		return
 	}
+	switch req.Kind {
+	case "":
+	case "resolved":
+		if req.Owner != "claude" && req.Owner != "codex" && req.Owner != "user" {
+			writeErr(w, http.StatusBadRequest, "kind=resolved 必须带 owner（claude|codex|user）")
+			return
+		}
+	default:
+		writeErr(w, http.StatusBadRequest, "kind 只能为空或 resolved（conclusion/kickoff 由服务器设定）")
+		return
+	}
 	_, toIDs, ok := s.validateOutgoing(w, ch, &req)
 	if !ok {
 		return
 	}
-	m, err := s.st.SaveMessage(ch.ID, p.user.ID, toIDs, req.Summary, req.Body, req.InReplyTo)
+	m, err := s.st.SaveMessageOpts(ch.ID, p.user.ID, toIDs, req.Summary, req.Body, req.InReplyTo, store.SaveOpts{
+		Kind: req.Kind, Owner: req.Owner, OwnerReason: req.OwnerReason, AckOf: req.AckOf,
+		IdemKey: r.Header.Get("Idempotency-Key"),
+	})
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "服务器内部错误")
 		return
 	}
-	s.publish(ch.ID, toAPI(m, ch.Name, false)) // Task 9 实现；本任务先加空方法占位
+	if req.Kind == "" {
+		_ = s.st.ClearKickedOff(ch.ID)
+	}
+	if req.Kind == "resolved" {
+		res, err := s.st.EvaluateHandshake(ch.ID, m.ID)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, "服务器内部错误")
+			return
+		}
+		if res == store.HandshakeDone {
+			if st, err := s.st.GetAuto(ch.ID); err == nil && st.Mode == "autopilot" {
+				if k, err := s.st.Kickoff(ch.ID, p.user.ID); err == nil {
+					s.publish(ch.ID, toAPI(k, ch.Name, false))
+				}
+			}
+			m, _ = s.st.GetMessage(m.ID, p.user.ID, true) // 取回 kind=conclusion
+		}
+	}
+	s.publish(ch.ID, toAPI(m, ch.Name, false))
 	writeJSON(w, http.StatusOK, toAPI(m, ch.Name, true))
 }
 

@@ -34,13 +34,23 @@ type Message struct {
 	InReplyTo   string    `json:"in_reply_to,omitempty"`
 	CreatedAt   time.Time `json:"created_at"`
 	Unread      bool      `json:"unread"`
+	Seq         int       `json:"seq"`
+	Round       int       `json:"round"`
+	Kind        string    `json:"kind,omitempty"`
+	Owner       string    `json:"owner,omitempty"`
+	OwnerReason string    `json:"owner_reason,omitempty"`
+	AckOf       string    `json:"ack_of,omitempty"`
 }
 
 type SendRequest struct {
-	To        []string `json:"to"`
-	Summary   string   `json:"summary"`
-	Body      string   `json:"body_md"`
-	InReplyTo string   `json:"in_reply_to,omitempty"`
+	To          []string `json:"to"`
+	Summary     string   `json:"summary"`
+	Body        string   `json:"body_md"`
+	InReplyTo   string   `json:"in_reply_to,omitempty"`
+	Kind        string   `json:"kind,omitempty"`
+	Owner       string   `json:"owner,omitempty"`
+	OwnerReason string   `json:"owner_reason,omitempty"`
+	AckOf       string   `json:"ack_of,omitempty"`
 }
 
 type LoginRequest struct {
@@ -117,16 +127,30 @@ type AdminMemberRequest struct {
 }
 
 type AutoState struct {
-	Enabled     bool   `json:"enabled"`
-	RoundCount  int    `json:"round_count"`
-	Cap         int    `json:"cap"`
-	Paused      bool   `json:"paused"`
-	NeedsHumanQ string `json:"needs_human_q"`
+	Enabled           bool   `json:"enabled"`
+	RoundCount        int    `json:"round_count"`
+	Cap               int    `json:"cap"`
+	Paused            bool   `json:"paused"`
+	NeedsHumanQ       string `json:"needs_human_q"`
+	Mode              string `json:"mode"`
+	Resolved          bool   `json:"resolved"`
+	ResolutionMsgID   string `json:"resolution_msg_id,omitempty"`
+	ResolutionSummary string `json:"resolution_summary,omitempty"`
+	Owner             string `json:"owner,omitempty"`
+	KickedOff         bool   `json:"kicked_off"`
+	Closed            bool   `json:"closed"`
+	InFlight          bool   `json:"in_flight"`
+	Round             int    `json:"round"`
+	RoundCap          int    `json:"round_cap"`
 }
 
 type AutoConfigRequest struct {
 	Enabled bool `json:"enabled"`
 	Cap     int  `json:"cap"`
+}
+
+type ModeRequest struct {
+	Mode string `json:"mode"`
 }
 
 type GuidanceRequest struct {

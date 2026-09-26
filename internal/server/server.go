@@ -63,6 +63,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/channels/{name}/auto/resume", s.auth(s.autoResume))
 	mux.HandleFunc("POST /api/channels/{name}/auto/turn", s.auth(s.autoTurn))
 	mux.HandleFunc("POST /api/channels/{name}/auto/needs-human", s.auth(s.autoNeedsHuman))
+	mux.HandleFunc("POST /api/channels/{name}/auto/kickoff", s.auth(s.autoKickoff))
+	mux.HandleFunc("POST /api/channels/{name}/auto/reopen", s.auth(s.autoReopen))
+	mux.HandleFunc("POST /api/channels/{name}/auto/mode", s.auth(s.autoMode))
 	mux.HandleFunc("POST /api/channels/{name}/guidance", s.auth(s.guidancePost))
 	mux.HandleFunc("GET /api/channels/{name}/guidance", s.auth(s.guidancePull))
 
