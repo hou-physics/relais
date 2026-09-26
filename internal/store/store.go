@@ -1009,7 +1009,9 @@ func (s *Store) EvaluateHandshake(channelID int64, m2ID string) (HandshakeResult
 		n1, _ := s.usernameByIDTx(tx, m1Sender)
 		n2, _ := s.usernameByIDTx(tx, m2Sender)
 		q := fmt.Sprintf("承接方分歧：%s 提名 %s（%s），%s 提名 %s（%s），请定", n1, m1Owner, m1Reason, n2, m2Owner, m2Reason)
-		if _, err := tx.Exec(`UPDATE channel_auto SET paused=1, needs_human_q=? WHERE channel_id=?`, q, channelID); err != nil {
+		// upsert：频道可能从未 SetAutoEnabled，没有 channel_auto 行，普通 UPDATE 会静默匹配 0 行
+		if _, err := tx.Exec(`INSERT INTO channel_auto (channel_id, paused, needs_human_q) VALUES (?,1,?)
+			ON CONFLICT(channel_id) DO UPDATE SET paused=1, needs_human_q=excluded.needs_human_q`, channelID, q); err != nil {
 			return HandshakeNone, err
 		}
 		return HandshakeOwnerConflict, tx.Commit()
@@ -1017,7 +1019,9 @@ func (s *Store) EvaluateHandshake(channelID int64, m2ID string) (HandshakeResult
 	if _, err := tx.Exec(`UPDATE messages SET kind='conclusion' WHERE id=?`, m2ID); err != nil {
 		return HandshakeNone, err
 	}
-	if _, err := tx.Exec(`UPDATE channel_auto SET resolved=1, resolution_msg_id=?, paused=1 WHERE channel_id=?`, m2ID, channelID); err != nil {
+	// upsert：同上，握手成立时也要在没有 channel_auto 行的频道里把行建出来
+	if _, err := tx.Exec(`INSERT INTO channel_auto (channel_id, resolved, resolution_msg_id, paused) VALUES (?,1,?,1)
+		ON CONFLICT(channel_id) DO UPDATE SET resolved=1, resolution_msg_id=excluded.resolution_msg_id, paused=1`, channelID, m2ID); err != nil {
 		return HandshakeNone, err
 	}
 	return HandshakeDone, tx.Commit()
@@ -1032,6 +1036,12 @@ func (s *Store) usernameByIDTx(tx *sql.Tx, id int64) (string, error) {
 var ErrNotResolved = errors.New("频道尚未握手，无结论可开工")
 
 // Kickoff 把当前结论投递为一条 kind=kickoff 消息（发全体成员，不占 seq），并让频道回到空闲。
+//
+// 并发保护：顶部的 GetAuto 检查只是快速失败的提示，真正的互斥点在事务末尾——
+// 状态迁移用 `WHERE resolved=1` 的条件 UPDATE 并检查 RowsAffected，只有仍处于
+// resolved=1 的那个调用能把它翻成 0 并提交；另一个并发调用（网页重复点击，或
+// 甩手模式下服务器自动调用与人工点击赛跑）会在同一次 UPDATE 里匹配 0 行，
+// 从而回滚它已插入但尚未提交的 kickoff 消息，返回 ErrNotResolved。
 func (s *Store) Kickoff(channelID, actorID int64) (*Message, error) {
 	a, err := s.GetAuto(channelID)
 	if err != nil {
@@ -1067,8 +1077,17 @@ func (s *Store) Kickoff(channelID, actorID int64) (*Message, error) {
 			return nil, err
 		}
 	}
-	if _, err := tx.Exec(`UPDATE channel_auto SET kicked_off=1, resolved=0, paused=0, round_count=0, needs_human_q='' WHERE channel_id=?`, channelID); err != nil {
+	res, err := tx.Exec(`UPDATE channel_auto SET kicked_off=1, resolved=0, paused=0, round_count=0, needs_human_q='' WHERE channel_id=? AND resolved=1`, channelID)
+	if err != nil {
 		return nil, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return nil, err
+	}
+	if n != 1 {
+		// 输给了并发的另一次 Kickoff：defer tx.Rollback() 会丢掉本次已插入的消息
+		return nil, ErrNotResolved
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, err
@@ -1091,7 +1110,9 @@ func (s *Store) SetMode(channelID int64, mode string) error {
 }
 
 func (s *Store) CloseChannel(channelID int64) error {
-	_, err := s.db.Exec(`UPDATE channel_auto SET closed=1, paused=1 WHERE channel_id=?`, channelID)
+	// upsert：频道可能从未 SetAutoEnabled，没有 channel_auto 行，普通 UPDATE 会静默匹配 0 行
+	_, err := s.db.Exec(`INSERT INTO channel_auto (channel_id, closed, paused) VALUES (?,1,1)
+		ON CONFLICT(channel_id) DO UPDATE SET closed=1, paused=1`, channelID)
 	return err
 }
 

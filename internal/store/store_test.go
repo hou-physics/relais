@@ -707,6 +707,9 @@ func TestKickoffReopenModeClose(t *testing.T) {
 	if err == nil {
 		t.Fatalf("未 resolved 时 Kickoff 应报错: %+v", k)
 	}
+	if !errors.Is(err, ErrNotResolved) {
+		t.Fatalf("第二次 Kickoff 应返回 ErrNotResolved: %v", err)
+	}
 	a1, _ := st.GetAuto(ch.ID)
 	if !a1.KickedOff || a1.Resolved || a1.Paused || a1.RoundCount != 0 || a1.ResolutionMsgID != m2.ID {
 		t.Fatalf("kickoff 后状态错: %+v", a1)
@@ -723,16 +726,21 @@ func TestKickoffReopenModeClose(t *testing.T) {
 	if err := st.ClearKickedOff(ch.ID); err != nil {
 		t.Fatal(err)
 	}
-	// reopen
-	st.SaveMessageOpts(ch.ID, a.ID, []int64{b.ID}, "s", "x", "", SaveOpts{Kind: "resolved", Owner: "codex"})
-	m4, _ := st.SaveMessageOpts(ch.ID, b.ID, []int64{a.ID}, "s", "x", "", SaveOpts{Kind: "resolved", Owner: "codex", AckOf: ""})
-	_ = m4
+	// reopen：先走一次真实握手到 resolved 状态，再验证 Reopen 把握手/暂停/问题/回合计数一并清空
+	m3, _ := st.SaveMessageOpts(ch.ID, a.ID, []int64{b.ID}, "s", "x", "", SaveOpts{Kind: "resolved", Owner: "codex"})
+	m4, _ := st.SaveMessageOpts(ch.ID, b.ID, []int64{a.ID}, "s", "x", "", SaveOpts{Kind: "resolved", Owner: "codex", AckOf: m3.ID})
+	if r, err := st.EvaluateHandshake(ch.ID, m4.ID); err != nil || r != HandshakeDone {
+		t.Fatalf("reopen 前置握手应成立: %v %v", r, err)
+	}
+	if a1b, _ := st.GetAuto(ch.ID); !a1b.Resolved || a1b.ResolutionMsgID != m4.ID {
+		t.Fatalf("握手后应处于 resolved: %+v", a1b)
+	}
 	st.SetNeedsHuman(ch.ID, "q")
 	if err := st.Reopen(ch.ID); err != nil {
 		t.Fatal(err)
 	}
 	a2, _ := st.GetAuto(ch.ID)
-	if a2.Resolved || a2.Paused || a2.NeedsHumanQ != "" || a2.RoundCount != 0 {
+	if a2.Resolved || a2.Paused || a2.NeedsHumanQ != "" || a2.RoundCount != 0 || a2.ResolutionMsgID != "" {
 		t.Fatalf("reopen 后状态错: %+v", a2)
 	}
 	// mode
@@ -789,5 +797,39 @@ func TestInFlight(t *testing.T) {
 	st.MarkRead(m.ID, b.ID)
 	if s, _ := st.GetAuto(ch.ID); s.InFlight {
 		t.Fatal("已读后不在途")
+	}
+}
+
+// TestHandshakeAndCloseWithoutAutoRow 覆盖"频道从未 SetAutoEnabled，因此没有 channel_auto 行"的场景：
+// EvaluateHandshake 与 CloseChannel 必须各自把行 upsert 出来，而不是静默地更新 0 行后仍返回成功。
+func TestHandshakeAndCloseWithoutAutoRow(t *testing.T) {
+	st := testStore(t)
+	a, _ := st.CreateUser("claude", "Claude 侧", "pw")
+	b, _ := st.CreateUser("codex", "Codex 侧", "pw")
+
+	ch1, _ := st.CreateChannel("no-auto-row-handshake")
+	st.AddMember(ch1.ID, a.ID)
+	st.AddMember(ch1.ID, b.ID)
+	// 故意不调用 SetAutoEnabled：ch1 没有 channel_auto 行
+	m1, _ := st.SaveMessageOpts(ch1.ID, a.ID, []int64{b.ID}, "s", "X", "", SaveOpts{Kind: "resolved", Owner: "codex"})
+	m2, _ := st.SaveMessageOpts(ch1.ID, b.ID, []int64{a.ID}, "s", "X", "", SaveOpts{Kind: "resolved", Owner: "codex", AckOf: m1.ID})
+	r, err := st.EvaluateHandshake(ch1.ID, m2.ID)
+	if err != nil || r != HandshakeDone {
+		t.Fatalf("无 channel_auto 行时握手应仍成立: %v %v", r, err)
+	}
+	got, _ := st.GetAuto(ch1.ID)
+	if !got.Resolved || got.ResolutionMsgID != m2.ID {
+		t.Fatalf("无 channel_auto 行时握手结果应落库: %+v", got)
+	}
+
+	ch2, _ := st.CreateChannel("no-auto-row-close")
+	st.AddMember(ch2.ID, a.ID)
+	// 故意不调用 SetAutoEnabled：ch2 也没有 channel_auto 行
+	if err := st.CloseChannel(ch2.ID); err != nil {
+		t.Fatal(err)
+	}
+	got2, _ := st.GetAuto(ch2.ID)
+	if !got2.Closed {
+		t.Fatalf("无 channel_auto 行时 CloseChannel 应仍生效: %+v", got2)
 	}
 }
