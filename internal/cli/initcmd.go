@@ -26,30 +26,37 @@ func RunInit(args []string) error {
 	if err != nil {
 		return err
 	}
-	for _, sub := range []string{"inbox", "sent", "drafts"} {
-		if err := os.MkdirAll(filepath.Join(root, "relais", sub), 0o755); err != nil {
-			return err
-		}
-	}
-	conf := fmt.Sprintf("server = %q\nchannel = %q\n", cfg.Server, channel)
-	if err := os.WriteFile(filepath.Join(root, "relais", "config.toml"), []byte(conf), 0o644); err != nil {
-		return err
-	}
-	if err := os.WriteFile(filepath.Join(root, "relais", "AGENT.md"),
-		[]byte(guide.Text(cfg.Username, channel)), 0o644); err != nil {
+	gitignoreNote, err := initProject(root, cfg.Server, channel, cfg.Username)
+	if err != nil {
 		return err
 	}
 	if err := registerProject(channel, root); err != nil {
 		fmt.Printf("警告：写入项目注册表失败（bridge 将无法自动覆盖本项目）: %v\n", err)
 	}
-	gitignoreNote := ensureGitignore(root)
 	fmt.Printf(`已绑定频道 %q → %s
     relais/config.toml  绑定配置
     relais/AGENT.md     agent 使用说明（把它的内容贴进 CLAUDE.md / AGENTS.md，或让 agent 直接读）
-    relais/inbox|sent|drafts/  消息落盘目录
+    relais/inbox|sent|drafts|conclusions/  消息落盘目录
     已登记到本机项目注册表（relais bridge 会自动照看此项目）
 %s`, channel, cfg.Server, gitignoreNote)
 	return nil
+}
+
+// initProject 在 root 下写 relais/{config.toml,AGENT.md,inbox,sent,drafts,conclusions}，返回 gitignore 提示。不做网络校验、不登记注册表。
+func initProject(root, server, channel, username string) (string, error) {
+	for _, sub := range []string{"inbox", "sent", "drafts", "conclusions"} {
+		if err := os.MkdirAll(filepath.Join(root, "relais", sub), 0o755); err != nil {
+			return "", err
+		}
+	}
+	conf := fmt.Sprintf("server = %q\nchannel = %q\n", server, channel)
+	if err := os.WriteFile(filepath.Join(root, "relais", "config.toml"), []byte(conf), 0o644); err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(filepath.Join(root, "relais", "AGENT.md"), []byte(guide.Text(username, channel)), 0o644); err != nil {
+		return "", err
+	}
+	return ensureGitignore(root), nil
 }
 
 // ensureGitignore 在项目根的 .gitignore 里补 relais/（消息不进 git，事实源在服务器）。

@@ -157,6 +157,10 @@ func saveSetup(info SetupInfo) error {
 	if err != nil {
 		return err
 	}
+	return saveSetupTo(dir, info)
+}
+
+func saveSetupTo(dir string, info SetupInfo) error {
 	f, err := os.OpenFile(filepath.Join(dir, "setup.toml"), os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
 	if err != nil {
 		return err

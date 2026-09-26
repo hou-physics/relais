@@ -42,6 +42,10 @@ func saveGlobal(cfg *GlobalConfig) error {
 	if err != nil {
 		return err
 	}
+	return saveGlobalTo(dir, cfg)
+}
+
+func saveGlobalTo(dir string, cfg *GlobalConfig) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
@@ -72,12 +76,16 @@ func registerProject(channel, dir string) error {
 	if err != nil {
 		return err
 	}
+	return registerProjectIn(registryDir, channel, dir)
+}
+
+// registerProjectIn 在指定配置目录的 projects.toml 里 upsert（同 channel 覆盖 dir）。
+func registerProjectIn(registryDir, channel, dir string) error {
 	if err := os.MkdirAll(registryDir, 0o700); err != nil {
 		return err
 	}
 	path := filepath.Join(registryDir, "projects.toml")
-	ps, _ := loadProjects() // 已有记录
-	// upsert：同 channel 覆盖 dir
+	ps, _ := loadProjectsIn(registryDir) // 已有记录
 	found := false
 	for i, p := range ps {
 		if p.Channel == channel {
@@ -102,6 +110,10 @@ func loadProjects() ([]ProjectBinding, error) {
 	if err != nil {
 		return nil, err
 	}
+	return loadProjectsIn(registryDir)
+}
+
+func loadProjectsIn(registryDir string) ([]ProjectBinding, error) {
 	path := filepath.Join(registryDir, "projects.toml")
 	var reg ProjectRegistry
 	if _, err := toml.DecodeFile(path, &reg); err != nil {
