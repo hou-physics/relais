@@ -19,7 +19,7 @@ func main() {
 
 func run(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("用法: relais <serve|login|init|setup|send|draft|inbox|pull|members|agent-guide|user|channel|invite|bridge|admin|auto|auto-turn|needs-human|guidance-pull|conclusion|doctor|session|local-prompt|local|version>")
+		return fmt.Errorf("用法: relais <serve|login|init|setup|send|draft|inbox|pull|members|agent-guide|user|channel|invite|bridge|admin|auto|auto-turn|needs-human|guidance-pull|doctor|local|version>")
 	}
 	switch args[0] {
 	case "version":
@@ -63,14 +63,8 @@ func run(args []string) error {
 		return cli.RunNeedsHuman(args[1:])
 	case "guidance-pull":
 		return cli.RunGuidancePull(args[1:])
-	case "conclusion":
-		return cli.RunConclusion(args[1:])
 	case "doctor":
 		return cli.RunDoctor(args[1:])
-	case "session":
-		return cli.RunSession(args[1:])
-	case "local-prompt":
-		return cli.RunLocalPrompt(args[1:])
 	case "local":
 		return cli.RunLocal(args[1:])
 	default:

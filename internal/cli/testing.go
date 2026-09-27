@@ -20,6 +20,3 @@ func NewClientForTest() (*Client, error) {
 
 // NewLocalManagerForTest 暴露本地管理器；生产代码不得调用。
 func NewLocalManagerForTest(ld string) server.LocalManager { return newLocalManager(ld) }
-
-// LoadBridgeTargetsForTest 暴露 bridge 目标重读；生产代码不得调用。
-func LoadBridgeTargetsForTest() []bridgeTarget { ts, _ := loadBridgeTargets(); return ts }

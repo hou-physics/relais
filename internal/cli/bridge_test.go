@@ -2,13 +2,10 @@ package cli
 
 import (
 	"io"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
-	"sync/atomic"
 	"testing"
 
 	"github.com/hou-physics/relais/internal/api"
@@ -176,46 +173,6 @@ func TestBridgeTargetsReloadEachPoll(t *testing.T) {
 	}
 }
 
-func TestHeartbeatSilentOn404(t *testing.T) {
-	var n atomic.Int32
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		n.Add(1)
-		http.NotFound(w, r) // 联网服务器没有心跳路由
-	}))
-	defer ts.Close()
-	c := &Client{Server: ts.URL, Token: "t", hc: ts.Client()}
-	t.Setenv("RELAIS_CONFIG_DIR", "")
-	if err := c.Heartbeat(); err != nil || n.Load() != 0 {
-		t.Fatalf("非本地侧（无 RELAIS_CONFIG_DIR）不应发心跳: err=%v n=%d", err, n.Load())
-	}
-	t.Setenv("RELAIS_CONFIG_DIR", t.TempDir())
-	if err := c.Heartbeat(); err != nil {
-		t.Fatalf("联网服务器无心跳路由时应静默: %v", err)
-	}
-	if n.Load() != 1 {
-		t.Fatalf("本地侧第一次应发一次心跳，实为 %d", n.Load())
-	}
-	if err := c.Heartbeat(); err != nil || n.Load() != 1 {
-		t.Fatalf("收到 404 后不应再发心跳: err=%v n=%d", err, n.Load())
-	}
-}
-
-func TestHeartbeatKeepsSendingOn200(t *testing.T) {
-	var n atomic.Int32
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		n.Add(1)
-		w.WriteHeader(http.StatusNoContent)
-	}))
-	defer ts.Close()
-	c := &Client{Server: ts.URL, Token: "t", hc: ts.Client()}
-	t.Setenv("RELAIS_CONFIG_DIR", t.TempDir())
-	c.Heartbeat()
-	c.Heartbeat()
-	if n.Load() != 2 {
-		t.Fatalf("本地服务器正常时每次都应发心跳，实为 %d", n.Load())
-	}
-}
-
 func TestPollOnceRoutesKickoffToConclusions(t *testing.T) {
 	st, users, proj := setupCLITest(t, "hou", "duo")
 	duo, _ := st.ChannelByName("duo")
@@ -240,9 +197,9 @@ func TestPollOnceRoutesKickoffToConclusions(t *testing.T) {
 	if err != nil || n != 1 {
 		t.Fatalf("应落 1 条: %d %v", n, err)
 	}
-	// 多模块项目里裸 relais conclusion 会打印错的结论，提示须带频道名
-	if !strings.Contains(string(printed), "relais conclusion duo") {
-		t.Fatalf("开工提示应带频道名: %s", printed)
+	// 开工提示直接给出结论文件路径（relais conclusion 子命令已在 M9 删除）
+	if !strings.Contains(string(printed), filepath.Join(proj, "relais", "conclusions", "duo-")) {
+		t.Fatalf("开工提示应带结论路径: %s", printed)
 	}
 	if _, err := os.Stat(marker); err == nil {
 		t.Fatal("kickoff 不应触发 hook")
@@ -268,9 +225,6 @@ func TestPollOnceRoutesKickoffToConclusions(t *testing.T) {
 	}
 	if inbox, _ := os.ReadDir(filepath.Join(proj, "relais", "inbox")); len(inbox) != 0 {
 		t.Fatal("kickoff 不应落 inbox")
-	}
-	if err := RunConclusion(nil); err != nil {
-		t.Fatal(err)
 	}
 }
 

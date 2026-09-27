@@ -17,7 +17,7 @@ func TestLocalInitIsIdempotent(t *testing.T) {
 	ld := t.TempDir()
 	t.Setenv("RELAIS_LOCAL_DIR", ld)
 	proj := t.TempDir()
-	args := []string{"init", "--claude", "/bin/echo", "--codex", "/bin/cat", "--project", proj, "--no-service", "grammar", "reader"}
+	args := []string{"init", "--project", proj, "--no-service", "grammar", "reader"}
 	if err := RunLocal(args); err != nil {
 		t.Fatal(err)
 	}
@@ -57,50 +57,20 @@ func TestLocalInitIsIdempotent(t *testing.T) {
 			t.Fatalf("本地频道默认 enabled cap=16 supervised: %+v", a)
 		}
 	}
-	// 两侧配置目录
-	for _, side := range []string{"claude", "codex"} {
-		d := filepath.Join(ld, "sides", side)
-		var g GlobalConfig
-		if _, err := toml.DecodeFile(filepath.Join(d, "config.toml"), &g); err != nil || g.Username != side || g.Server != "http://127.0.0.1:8080" || g.Token == "" {
-			t.Fatalf("%s config.toml 错: %+v %v", side, g, err)
-		}
-		u, _ := st.UserByName(side)
-		if g.Token != u.AgentToken {
-			t.Fatalf("%s token 应与库一致", side)
-		}
-		var si SetupInfo
-		toml.DecodeFile(filepath.Join(d, "setup.toml"), &si)
-		if si.Agent != side || si.Mode != "auto" || !strings.HasSuffix(si.HookPath, "auto-reply.sh") {
-			t.Fatalf("%s setup.toml 错: %+v", side, si)
-		}
-		if _, err := os.Stat(si.HookPath); err != nil {
-			t.Fatalf("%s hook 应存在", side)
-		}
-		ps, _ := loadProjectsIn(d)
-		if len(ps) != 2 {
-			t.Fatalf("%s projects.toml 应登记 2 个频道（重复 init 不重复登记）: %v", side, ps)
+	lms, _ := st.LocalModules()
+	if len(lms) != 2 || lms[0].Name != "grammar" || lms[0].Dir != proj {
+		t.Fatalf("登记表应有 2 个模块（重复 init 不重复登记）: %+v", lms)
+	}
+	// 项目目录：协议、信箱、指针块；不再有 sides/、human.txt、RULES.md、AGENT.md
+	for _, p := range []string{"relais/PROTOCOL.md", "relais/mail/grammar/outbox", "relais/mail/reader/outbox", "CLAUDE.md", "AGENTS.md"} {
+		if _, err := os.Stat(filepath.Join(proj, p)); err != nil {
+			t.Fatalf("应生成 %s", p)
 		}
 	}
-	// 项目目录
-	if _, err := os.Stat(filepath.Join(proj, "relais", "RULES.md")); err != nil {
-		t.Fatal("应生成 RULES.md")
-	}
-	var pc ProjectConfig
-	toml.DecodeFile(filepath.Join(proj, "relais", "config.toml"), &pc)
-	if pc.Channel != "grammar" { // 第一个模块作默认绑定；其余模块靠 RELAIS_CHANNEL（Task 4）
-		t.Fatalf("项目绑定错: %+v", pc)
-	}
-	// 人的账号只写一次
-	if data, err := os.ReadFile(filepath.Join(ld, "human.txt")); err != nil || !strings.Contains(string(data), "hou") {
-		t.Fatalf("human.txt 应含账号: %v", err)
-	}
-}
-
-func TestLocalInitRequiresBothAgents(t *testing.T) {
-	t.Setenv("RELAIS_LOCAL_DIR", t.TempDir())
-	err := RunLocal([]string{"init", "--claude", "/bin/echo", "--codex", "/nonexistent/codex", "--project", t.TempDir(), "--no-service", "m1"})
-	if err == nil || !strings.Contains(err.Error(), "codex") {
-		t.Fatalf("codex 路径不存在应报错: %v", err)
+	for _, p := range []string{filepath.Join(ld, "sides"), filepath.Join(ld, "human.txt"), filepath.Join(proj, "relais", "RULES.md"), filepath.Join(proj, "relais", "AGENT.md")} {
+		if _, err := os.Stat(p); err == nil {
+			t.Fatalf("不应再生成 %s", p)
+		}
 	}
 }
 
@@ -108,12 +78,16 @@ func TestLocalStatusAndClose(t *testing.T) {
 	ld := t.TempDir()
 	t.Setenv("RELAIS_LOCAL_DIR", ld)
 	proj := t.TempDir()
-	if err := RunLocal([]string{"init", "--claude", "/bin/echo", "--codex", "/bin/cat", "--project", proj, "--no-service", "m1"}); err != nil {
+	if err := RunLocal([]string{"init", "--project", proj, "--no-service", "m1"}); err != nil {
 		t.Fatal(err)
 	}
-	sessionSet(filepath.Join(ld, "sides", "claude"), "m1", "sid-1")
-	if err := RunLocal([]string{"status"}); err != nil {
-		t.Fatal(err)
+	out := captureStdout(t, func() {
+		if err := RunLocal([]string{"status"}); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if !strings.Contains(out, "m1") || !strings.Contains(out, "第 0/8 回合") || !strings.Contains(out, "未接入") || !strings.Contains(out, "claude:没在等") || !strings.Contains(out, "codex:未接入") {
+		t.Fatalf("status 输出: %s", out)
 	}
 	if err := RunLocal([]string{"close", "m1"}); err != nil {
 		t.Fatal(err)
@@ -124,8 +98,8 @@ func TestLocalStatusAndClose(t *testing.T) {
 	if a, _ := st.GetAuto(ch.ID); !a.Closed {
 		t.Fatal("close 后应 closed")
 	}
-	if id, _ := sessionGet(filepath.Join(ld, "sides", "claude"), "m1"); id != "" {
-		t.Fatal("close 应作废会话 id")
+	if lm, _ := st.LocalModuleByName("m1"); lm.ClosedAt == "" {
+		t.Fatal("close 应记下关闭时间")
 	}
 	if err := RunLocal([]string{"close", "nope"}); err == nil {
 		t.Fatal("关闭不存在的频道应报错")
@@ -140,7 +114,7 @@ func TestLocalInitRejectsNonLoopbackExistingConfig(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(ld, "server.toml"), []byte(sc), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	err := RunLocal([]string{"init", "--claude", "/bin/echo", "--codex", "/bin/cat", "--project", t.TempDir(), "--no-service", "m1"})
+	err := RunLocal([]string{"init", "--project", t.TempDir(), "--no-service", "m1"})
 	if err == nil || !strings.Contains(err.Error(), "回环") {
 		t.Fatalf("非回环 listen 的既有 server.toml 应报错: %v", err)
 	}
@@ -167,7 +141,7 @@ func TestLocalInitQuotesPaths(t *testing.T) {
 	r, w, _ := os.Pipe()
 	old := os.Stdout
 	os.Stdout = w
-	err := RunLocal([]string{"init", "--claude", "/bin/echo", "--codex", "/bin/cat", "--project", t.TempDir(), "--no-service", "m1"})
+	err := RunLocal([]string{"init", "--project", t.TempDir(), "--no-service", "m1"})
 	w.Close()
 	os.Stdout = old
 	out, _ := io.ReadAll(r)
@@ -175,9 +149,8 @@ func TestLocalInitQuotesPaths(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		"'" + filepath.Join(ld, "human.txt") + "'",
+		"'" + ld + "'",
 		"relais serve --config '" + filepath.Join(ld, "server.toml") + "'",
-		"--hook '" + filepath.Join(ld, "sides", "codex", "hooks", "auto-reply.sh") + "'",
 	} {
 		if !strings.Contains(string(out), want) {
 			t.Fatalf("输出里的路径应加引号 %q:\n%s", want, out)
@@ -201,40 +174,36 @@ func TestLocalBootstrapCommandJSON(t *testing.T) {
 	ld := t.TempDir()
 	t.Setenv("RELAIS_LOCAL_DIR", ld)
 	out := captureStdout(t, func() {
-		if err := RunLocal([]string{"bootstrap", "--claude", "/bin/echo", "--codex", "/bin/cat", "--listen", "127.0.0.1:18098", "--no-service", "--json"}); err != nil {
+		if err := RunLocal([]string{"bootstrap", "--listen", "127.0.0.1:18098", "--no-service", "--json"}); err != nil {
 			t.Fatal(err)
 		}
 	})
-	var res struct {
-		BaseURL       string `json:"base_url"`
-		HumanUser     string `json:"human_user"`
-		HumanPassword string `json:"human_password"`
-		PasswordShown bool   `json:"password_shown"`
-	}
-	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &res); err != nil || res.BaseURL != "http://127.0.0.1:18098" || res.HumanUser != "hou" || !res.PasswordShown || res.HumanPassword == "" {
+	var res map[string]any
+	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &res); err != nil || len(res) != 2 || res["base_url"] != "http://127.0.0.1:18098" || res["human_user"] != "hou" {
 		t.Fatalf("bootstrap --json 输出错: %q %v", out, err)
 	}
 	if n := strings.Count(strings.TrimSpace(out), "\n"); n != 0 {
 		t.Fatalf("bootstrap --json 的 stdout 应恰好一行: %q", out)
 	}
-	if _, err := os.Stat(filepath.Join(ld, "sides", "codex", "hooks", "auto-reply.sh")); err != nil {
-		t.Fatal("bootstrap 应生成两侧 hook")
+	for _, p := range []string{"sides", "human.txt"} {
+		if _, err := os.Stat(filepath.Join(ld, p)); err == nil {
+			t.Fatalf("bootstrap 不应再写 %s", p)
+		}
 	}
-	// 第二次：password_shown=false，不建模块
-	out = captureStdout(t, func() {
-		RunLocal([]string{"bootstrap", "--claude", "/bin/echo", "--codex", "/bin/cat", "--listen", "127.0.0.1:18098", "--no-service", "--json"})
+	// 第二次：幂等，输出不变
+	out2 := captureStdout(t, func() {
+		if err := RunLocal([]string{"bootstrap", "--listen", "127.0.0.1:18098", "--no-service", "--json"}); err != nil {
+			t.Fatal(err)
+		}
 	})
-	if !strings.Contains(out, `"password_shown":false`) {
-		t.Fatalf("第二次不应再显示密码: %q", out)
-	}
-	if err := RunLocal([]string{"bootstrap", "--claude", "/bin/echo", "--codex", "/nonexistent", "--no-service"}); err == nil || !strings.Contains(err.Error(), "codex") {
-		t.Fatalf("codex 路径无效应报错: %v", err)
+	if out2 != out || strings.Contains(out2, "password") {
+		t.Fatalf("第二次输出应相同且不含密码: %q", out2)
 	}
 }
 
 func TestPrintBootstrapJSONOneLine(t *testing.T) {
 	var b strings.Builder
-	if err := printBootstrapJSON(&b, bootstrapResult{BaseURL: "http://127.0.0.1:8080", HumanUser: "hou", HumanPassword: "pw", PasswordShown: true}); err != nil {
+	if err := printBootstrapJSON(&b, bootstrapResult{BaseURL: "http://127.0.0.1:8080", HumanUser: "hou"}); err != nil {
 		t.Fatal(err)
 	}
 	out := b.String()
@@ -242,7 +211,7 @@ func TestPrintBootstrapJSONOneLine(t *testing.T) {
 		t.Fatalf("应恰好一行: %q", out)
 	}
 	var m map[string]any
-	if err := json.Unmarshal([]byte(out), &m); err != nil || len(m) != 4 || m["password_shown"] != true || m["base_url"] != "http://127.0.0.1:8080" {
+	if err := json.Unmarshal([]byte(out), &m); err != nil || len(m) != 2 || m["human_user"] != "hou" || m["base_url"] != "http://127.0.0.1:8080" {
 		t.Fatalf("JSON 键不对: %q %v", out, err)
 	}
 }

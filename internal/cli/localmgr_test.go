@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"database/sql"
 	"errors"
 	"os"
 	"path/filepath"
@@ -8,32 +9,57 @@ import (
 	"testing"
 	"time"
 
-	"github.com/BurntSushi/toml"
 	"github.com/hou-physics/relais/internal/api"
 	"github.com/hou-physics/relais/internal/server"
 	"github.com/hou-physics/relais/internal/store"
 )
 
-func newMgrForTest(t *testing.T) (*localManager, string) {
+// bootstrapped：临时 ld + bootstrap 完成的本地管理器。
+func bootstrapped(t *testing.T) (string, *localManager) {
 	t.Helper()
 	ld := t.TempDir()
-	t.Setenv("RELAIS_LOCAL_DIR", ld)
-	m := newLocalManager(ld)
-	res, err := m.bootstrap("127.0.0.1:18099", "/bin/echo", "/bin/cat")
+	mgr := newLocalManager(ld)
+	if _, err := mgr.bootstrap("127.0.0.1:18080"); err != nil {
+		t.Fatal(err)
+	}
+	return ld, mgr
+}
+
+// fakeCodexHomeFor：照 internal/local/attach_test.go 的 fakeCodexHome 抄的假 Codex 状态库。
+func fakeCodexHomeFor(t *testing.T, proj string) string {
+	t.Helper()
+	home := t.TempDir()
+	db, err := sql.Open("sqlite", filepath.Join(home, "state_5.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !res.PasswordShown || res.HumanPassword == "" || res.HumanUser != "hou" || res.BaseURL != "http://127.0.0.1:18099" {
-		t.Fatalf("首次 bootstrap 结果错: %+v", res)
+	defer db.Close()
+	if _, err := db.Exec(`CREATE TABLE threads (id TEXT PRIMARY KEY, cwd TEXT NOT NULL, title TEXT NOT NULL, name TEXT, archived INTEGER NOT NULL DEFAULT 0, updated_at_ms INTEGER)`); err != nil {
+		t.Fatal(err)
 	}
-	return m, ld
+	rows := []struct {
+		id, cwd, title, name string
+		archived             int
+		ms                   int64
+	}{
+		{"t-old", proj, "旧对话", "", 0, 1000},
+		{"t-new", proj, "新对话", "巡天主对话", 0, 3000},
+		{"t-arch", proj, "已归档", "", 1, 5000},
+		{"t-other", "/elsewhere", "别的项目", "", 0, 9000},
+	}
+	for _, r := range rows {
+		if _, err := db.Exec(`INSERT INTO threads VALUES (?,?,?,?,?,?)`, r.id, r.cwd, r.title, r.name, r.archived, r.ms); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return home
 }
 
 func TestBootstrapIdempotentAndWritesLocalDir(t *testing.T) {
-	m, ld := newMgrForTest(t)
-	res2, err := m.bootstrap("127.0.0.1:18099", "/bin/echo", "/bin/cat")
-	if err != nil || res2.PasswordShown {
-		t.Fatalf("第二次 bootstrap 应幂等且不再显示密码: %+v %v", res2, err)
+	ld, m := bootstrapped(t)
+	res2, err := m.bootstrap("127.0.0.1:18080")
+	if err != nil || res2.HumanUser != "hou" || res2.BaseURL != "http://127.0.0.1:18080" {
+		t.Fatalf("第二次 bootstrap 应幂等: %+v %v", res2, err)
 	}
 	data, _ := os.ReadFile(filepath.Join(ld, "server.toml"))
 	if !strings.Contains(string(data), "local_dir = ") {
@@ -43,33 +69,36 @@ func TestBootstrapIdempotentAndWritesLocalDir(t *testing.T) {
 	if err != nil || cfg.LocalDir != ld {
 		t.Fatalf("LocalDir 应可读回: %+v %v", cfg, err)
 	}
+	for _, p := range []string{"sides", "human.txt"} {
+		if _, err := os.Stat(filepath.Join(ld, p)); err == nil {
+			t.Fatalf("不应再写 %s", p)
+		}
+	}
 	st, _ := store.Open(filepath.Join(ld, "data", "relais.db"))
 	defer st.Close()
-	for k, want := range map[string]string{"local.claude_path": "/bin/echo", "local.codex_path": "/bin/cat", "local.default_mode": "supervised"} {
+	for _, n := range []string{"claude", "codex", "hou"} {
+		if _, err := st.UserByName(n); err != nil {
+			t.Fatalf("用户 %s 应存在", n)
+		}
+	}
+	if u, _ := st.UserByName("hou"); !u.IsAdmin {
+		t.Fatal("hou 应是管理员")
+	}
+	for k, want := range map[string]string{"local.default_mode": "supervised", "local.default_cap": "8"} {
 		if v, _ := st.GetSetting(k); v != want {
 			t.Fatalf("setting %s = %q, want %q", k, v, want)
 		}
 	}
-	for _, side := range []string{"claude", "codex"} {
-		if _, err := os.Stat(filepath.Join(ld, "sides", side, "hooks", "auto-reply.sh")); err != nil {
-			t.Fatalf("%s hook 应存在", side)
-		}
+	if _, err := st.GetSetting("local.codex_path"); err != nil {
+		t.Fatalf("local.codex_path 读取不应报错: %v", err)
 	}
-	if !strings.HasPrefix(m.bootstrapMustFail("0.0.0.0:80"), "本地模式只允许监听回环") {
-		t.Fatal("非回环应拒绝")
+	if _, err := m.bootstrap("0.0.0.0:80"); err == nil || !strings.HasPrefix(err.Error(), "本地模式只允许监听回环") {
+		t.Fatalf("非回环应拒绝: %v", err)
 	}
-}
-
-// bootstrapMustFail 是测试小助手：返回错误文案
-func (m *localManager) bootstrapMustFail(listen string) string {
-	_, err := m.bootstrap(listen, "/bin/echo", "/bin/cat")
-	if err == nil {
-		return ""
-	}
-	return err.Error()
 }
 
 func TestScanRepos(t *testing.T) {
+	_, m := bootstrapped(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	mk := func(rel string, git bool) {
@@ -88,7 +117,6 @@ func TestScanRepos(t *testing.T) {
 	mk("Music/proj-y", true)
 	mk("Documents/proj-z", true) // 文稿受 TCC 保护，扫描不进
 	os.Chtimes(filepath.Join(home, "proj-a"), time.Now().Add(-time.Hour), time.Now().Add(-time.Hour))
-	m, _ := newMgrForTest(t)
 	repos, err := m.ScanRepos()
 	if err != nil {
 		t.Fatal(err)
@@ -105,217 +133,320 @@ func TestScanRepos(t *testing.T) {
 	}
 }
 
-func TestCreateListCloseModule(t *testing.T) {
-	m, ld := newMgrForTest(t)
+func TestCreateModuleWritesMailboxProtocolPointer(t *testing.T) {
+	ld, mgr := bootstrapped(t)
 	proj := t.TempDir()
-	mod, err := m.CreateModule(api.LocalModuleRequest{Name: "grammar", Dir: proj})
+	os.WriteFile(filepath.Join(proj, "CLAUDE.md"), []byte("# 项目\n"), 0o644)
+	m, err := mgr.CreateModule(api.LocalModuleRequest{Name: "黑客松", Dir: proj})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if mod.Name != "grammar" || mod.Dir != proj || mod.Mode != "supervised" || mod.RoundCap != 8 || mod.State != "running" {
-		t.Fatalf("模块信息错: %+v", mod)
+	if m.State != "未接入" || m.RoundCap != 8 || m.Mode != "supervised" {
+		t.Fatalf("初始状态: %+v", m)
 	}
-	if _, err := m.CreateModule(api.LocalModuleRequest{Name: "grammar", Dir: proj}); err != nil {
-		t.Fatalf("重复创建应幂等: %v", err)
-	}
-	for _, side := range []string{"claude", "codex"} {
-		ps, _ := loadProjectsIn(filepath.Join(ld, "sides", side))
-		if len(ps) != 1 || ps[0].Channel != "grammar" || ps[0].Dir != proj {
-			t.Fatalf("%s 侧登记错: %v", side, ps)
+	for _, p := range []string{"relais/mail/黑客松/outbox", "relais/mail/黑客松/drafts", "relais/PROTOCOL.md", "CLAUDE.md", "AGENTS.md"} {
+		if _, err := os.Stat(filepath.Join(proj, p)); err != nil {
+			t.Fatalf("缺 %s", p)
 		}
 	}
-	for _, f := range []string{"relais/config.toml", "relais/RULES.md", "relais/AGENT.md", "relais/conclusions"} {
-		if _, err := os.Stat(filepath.Join(proj, f)); err != nil {
-			t.Fatalf("项目应有 %s", f)
-		}
+	cl, _ := os.ReadFile(filepath.Join(proj, "CLAUDE.md"))
+	if !strings.HasPrefix(string(cl), "# 项目\n") || !strings.Contains(string(cl), "relais/PROTOCOL.md") || strings.Contains(string(cl), "relais/AGENT.md") {
+		t.Fatalf("指针块: %q", cl)
 	}
-	// 第二个模块共用目录：config.toml 不覆盖
-	if _, err := m.CreateModule(api.LocalModuleRequest{Name: "reader", Dir: proj}); err != nil {
-		t.Fatal(err)
+	if _, err := os.Stat(filepath.Join(proj, "relais", "AGENT.md")); err == nil {
+		t.Fatal("不再生成 AGENT.md")
 	}
-	var pc ProjectConfig
-	decodeTOMLFile(t, filepath.Join(proj, "relais", "config.toml"), &pc)
-	if pc.Channel != "grammar" {
-		t.Fatalf("默认频道应仍是第一个模块: %+v", pc)
+	if _, err := os.Stat(filepath.Join(ld, "sides")); err == nil {
+		t.Fatal("不再生成 sides/")
 	}
-	// 目录名含 ".." 字样但不是上级目录段：合法
-	dotted := filepath.Join(t.TempDir(), "foo..bar")
-	os.MkdirAll(dotted, 0o755)
-	if _, err := m.CreateModule(api.LocalModuleRequest{Name: "dotted", Dir: dotted}); err != nil {
-		t.Fatalf("foo..bar 应被接受: %v", err)
+	// 幂等 + 同名换目录拒绝
+	if _, err := mgr.CreateModule(api.LocalModuleRequest{Name: "黑客松", Dir: proj}); err != nil {
+		t.Fatal("重复创建应幂等")
 	}
-	// 已绑定的模块不能改绑到别的目录
-	if _, err := m.CreateModule(api.LocalModuleRequest{Name: "grammar", Dir: t.TempDir()}); !errors.Is(err, server.ErrLocalInvalid) || !strings.Contains(err.Error(), "不能改绑") {
-		t.Fatalf("改绑目录应 ErrLocalInvalid: %v", err)
+	if _, err := mgr.CreateModule(api.LocalModuleRequest{Name: "黑客松", Dir: t.TempDir()}); !errors.Is(err, server.ErrLocalInvalid) {
+		t.Fatalf("同名换目录应拒绝: %v", err)
 	}
-	if err := m.CloseModule("dotted"); err != nil {
-		t.Fatal(err)
+	mods, _ := mgr.ListModules()
+	if len(mods) != 1 || mods[0].Name != "黑客松" {
+		t.Fatalf("ListModules: %+v", mods)
 	}
 	// 非法输入
-	for _, bad := range []struct{ name, dir string }{{"bad name", proj}, {"x", "/nonexistent/dir"}, {"x", proj + "/../" + filepath.Base(proj)}, {"x", "relative"}} {
-		_, err := m.CreateModule(api.LocalModuleRequest{Name: bad.name, Dir: bad.dir})
-		if !errors.Is(err, server.ErrLocalInvalid) {
+	for _, bad := range []struct{ name, dir string }{{"a/b", proj}, {"", proj}, {"x", "/nonexistent/dir"}, {"x", proj + "/../" + filepath.Base(proj)}, {"x", "relative"}} {
+		if _, err := mgr.CreateModule(api.LocalModuleRequest{Name: bad.name, Dir: bad.dir}); !errors.Is(err, server.ErrLocalInvalid) {
 			t.Fatalf("%+v 应为 ErrLocalInvalid: %v", bad, err)
 		}
 	}
-	// list
-	mods, err := m.ListModules()
-	if err != nil || len(mods) != 3 {
-		t.Fatalf("应列出 3 个模块（含已关闭的 dotted）: %v %v", mods, err)
-	}
-	// 结论计数（api.LocalModule.Conclusions 字段在 M9 已删除，改由 outbox/守卫循环那一套状态
-	// 取代——Task 9 重写；这里不再断言旧字段，只留 close 相关部分）。
-	// close
-	sessionSet(filepath.Join(ld, "sides", "claude"), "grammar", "sid")
-	if err := m.CloseModule("grammar"); err != nil {
-		t.Fatal(err)
-	}
-	if id, _ := sessionGet(filepath.Join(ld, "sides", "claude"), "grammar"); id != "" {
-		t.Fatal("关闭应作废会话")
-	}
-	mods, _ = m.ListModules()
-	for _, md := range mods {
-		if md.Name == "grammar" && md.State != "closed" {
-			t.Fatalf("应显示 closed: %+v", md)
-		}
-	}
-	if err := m.CloseModule("nope"); !errors.Is(err, server.ErrLocalInvalid) {
-		t.Fatalf("关闭不存在的模块应 ErrLocalInvalid: %v", err)
-	}
 }
 
-// TestSettings：M9 的 api.LocalSettings 删了 ClaudePath、Rules/PutRules 方法整个没了
-// （见 server.LocalManager 新接口）；本测试只留 Settings/PutSettings 部分，字段换成 CodexPath。
-// 原 TestRulesAndSettings 的 Rules/PutRules/ClaudePath 断言按 Task 8 brief 的指示删除，
-// Task 9 会重写 cli 包时再补真实覆盖。
-func TestSettings(t *testing.T) {
-	m, ld := newMgrForTest(t)
+func TestCreateModuleKeepsCustomProtocol(t *testing.T) {
+	_, mgr := bootstrapped(t)
 	proj := t.TempDir()
-	m.CreateModule(api.LocalModuleRequest{Name: "grammar", Dir: proj})
-	s, _ := m.Settings()
-	if s.CodexPath != "/bin/cat" || s.DefaultMode != "supervised" {
-		t.Fatalf("settings 错: %+v", s)
+	os.MkdirAll(filepath.Join(proj, "relais"), 0o755)
+	os.WriteFile(filepath.Join(proj, "relais", "PROTOCOL.md"), []byte("我自己的协议\n"), 0o644)
+	if _, err := mgr.CreateModule(api.LocalModuleRequest{Name: "m", Dir: proj}); err != nil {
+		t.Fatalf("手改过的协议只记日志、不报错: %v", err)
 	}
-	before, _ := os.ReadFile(filepath.Join(ld, "sides", "codex", "hooks", "auto-reply.sh"))
-	if err := m.PutSettings(api.LocalSettings{CodexPath: "/bin/ls", DefaultMode: "autopilot", DefaultCap: 6}); err != nil {
-		t.Fatal(err)
-	}
-	after, _ := os.ReadFile(filepath.Join(ld, "sides", "codex", "hooks", "auto-reply.sh"))
-	if string(before) == string(after) || !strings.Contains(string(after), "/bin/ls") {
-		t.Fatal("改路径后应重写 hook")
-	}
-	s, _ = m.Settings()
-	if s.CodexPath != "/bin/ls" || s.DefaultMode != "autopilot" || s.DefaultCap != 6 {
-		t.Fatalf("settings 未更新: %+v", s)
-	}
-	for _, bad := range []api.LocalSettings{{CodexPath: "/nonexistent", DefaultMode: "supervised"}, {CodexPath: "/bin/ls", DefaultMode: "yolo"}, {CodexPath: t.TempDir(), DefaultMode: "supervised"}} {
-		if err := m.PutSettings(bad); !errors.Is(err, server.ErrLocalInvalid) {
-			t.Fatalf("%+v 应 ErrLocalInvalid: %v", bad, err)
-		}
+	if b, _ := os.ReadFile(filepath.Join(proj, "relais", "PROTOCOL.md")); string(b) != "我自己的协议\n" {
+		t.Fatalf("手改过的协议不应被覆盖: %q", b)
 	}
 }
 
-func decodeTOMLFile(t *testing.T, path string, v any) {
-	t.Helper()
-	if _, err := toml.DecodeFile(path, v); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestCreateModuleWritesLocalGuideForBothSides(t *testing.T) {
-	m, ld := newMgrForTest(t)
+func TestModuleStateFromMailbox(t *testing.T) {
+	_, mgr := bootstrapped(t)
 	proj := t.TempDir()
-	if _, err := m.CreateModule(api.LocalModuleRequest{Name: "grammar", Dir: proj}); err != nil {
+	mgr.CreateModule(api.LocalModuleRequest{Name: "m", Dir: proj})
+	md := filepath.Join(proj, "relais", "mail", "m")
+	os.WriteFile(filepath.Join(md, "001-hou.md"), []byte("---\nseq: 1\nfrom: hou\nkind: letter\nsummary: 议题\n---\n\n@codex 先回\n\n用什么缓存"), 0o644)
+	mods, _ := mgr.ListModules()
+	if m := mods[0]; m.State != "讨论中" || m.LastSeq != 1 || m.LastFrom != "hou" || m.WaitingFor != "codex" {
+		t.Fatalf("雇主开题后: %+v", m)
+	}
+	os.WriteFile(filepath.Join(md, "002-codex.md"), []byte("---\nseq: 2\nfrom: codex\nkind: letter\nsummary: 回\n---\n\n用 redis"), 0o644)
+	mods, _ = mgr.ListModules()
+	if m := mods[0]; m.WaitingFor != "claude" || m.LastSeq != 2 {
+		t.Fatalf("codex 回信后应等 claude: %+v", m)
+	}
+	os.WriteFile(filepath.Join(md, "outbox", "x.md.rejected"), []byte("坏信"), 0o644)
+	mods, _ = mgr.ListModules()
+	if m := mods[0]; m.State != "等你" || len(m.Rejected) != 1 || m.Rejected[0] != "x.md.rejected" {
+		t.Fatalf("有被拒的信应等你: %+v", m)
+	}
+}
+
+func TestPatchRenameMovesMailDirAndRejectsTaken(t *testing.T) {
+	_, mgr := bootstrapped(t)
+	proj := t.TempDir()
+	mgr.CreateModule(api.LocalModuleRequest{Name: "a", Dir: proj})
+	mgr.CreateModule(api.LocalModuleRequest{Name: "b", Dir: proj})
+	os.WriteFile(filepath.Join(proj, "relais", "mail", "a", "001-hou.md"), []byte("---\nseq: 1\nfrom: hou\nkind: letter\n---\n\nx"), 0o644)
+	if _, err := mgr.PatchModule("a", api.LocalModulePatch{Name: "b"}); err == nil {
+		t.Fatal("重名应拒绝")
+	}
+	m, err := mgr.PatchModule("a", api.LocalModulePatch{Name: "c", Mode: "autopilot", RoundCap: 3})
+	if err != nil || m.Name != "c" || m.Mode != "autopilot" || m.RoundCap != 3 || m.LastSeq != 1 {
+		t.Fatalf("patch: %+v %v", m, err)
+	}
+	if _, err := os.Stat(filepath.Join(proj, "relais", "mail", "c", "001-hou.md")); err != nil {
+		t.Fatal("信箱目录应随改名移动")
+	}
+	if _, err := os.Stat(filepath.Join(proj, "relais", "mail", "a")); err == nil {
+		t.Fatal("旧目录应不在")
+	}
+	// 目标信箱目录已存在（残留）：拒绝，且频道名回滚
+	os.MkdirAll(filepath.Join(proj, "relais", "mail", "d"), 0o755)
+	if _, err := mgr.PatchModule("c", api.LocalModulePatch{Name: "d"}); !errors.Is(err, server.ErrLocalInvalid) {
+		t.Fatalf("目标目录已存在应拒绝: %v", err)
+	}
+	if mods, _ := mgr.ListModules(); mods[1].Name != "c" {
+		t.Fatalf("频道名应保持 c: %+v", mods)
+	}
+	if _, err := mgr.PatchModule("c", api.LocalModulePatch{Mode: "yolo"}); !errors.Is(err, server.ErrLocalInvalid) {
+		t.Fatalf("非法模式应拒绝: %v", err)
+	}
+	if _, err := mgr.PatchModule("nope", api.LocalModulePatch{Mode: "autopilot"}); !errors.Is(err, server.ErrLocalInvalid) {
+		t.Fatalf("不存在的模块应拒绝: %v", err)
+	}
+}
+
+func TestPatchCapKeepsRoundCount(t *testing.T) {
+	_, mgr := bootstrapped(t)
+	proj := t.TempDir()
+	mgr.CreateModule(api.LocalModuleRequest{Name: "m", Dir: proj})
+	st, _, _ := mgr.open()
+	lm, _ := st.LocalModuleByName("m")
+	st.CountLocalTurn(lm.ChannelID)
+	st.CountLocalTurn(lm.ChannelID)
+	st.Close()
+	m, err := mgr.PatchModule("m", api.LocalModulePatch{RoundCap: 5})
+	if err != nil || m.RoundCap != 5 || m.Round != 1 {
+		t.Fatalf("改上限不应清零回合: %+v %v", m, err)
+	}
+}
+
+func TestCloseReopenDeleteModule(t *testing.T) {
+	_, mgr := bootstrapped(t)
+	proj := t.TempDir()
+	mgr.CreateModule(api.LocalModuleRequest{Name: "m", Dir: proj})
+	mgr.CloseModule("m")
+	mods, _ := mgr.ListModules()
+	if mods[0].State != "已关闭" || !mods[0].Closed {
+		t.Fatalf("close: %+v", mods[0])
+	}
+	if refs, _ := mgr.moduleRefs(); len(refs) != 0 {
+		t.Fatalf("已关闭模块不进守卫: %+v", refs)
+	}
+	mgr.ReopenModule("m")
+	mods, _ = mgr.ListModules()
+	if mods[0].Closed {
+		t.Fatal("reopen")
+	}
+	if refs, _ := mgr.moduleRefs(); len(refs) != 1 || refs[0].Name != "m" || refs[0].Dir != proj {
+		t.Fatalf("重开后进守卫: %+v", refs)
+	}
+	if err := mgr.DeleteModule("m", false); err != nil {
 		t.Fatal(err)
 	}
-	data, _ := os.ReadFile(filepath.Join(proj, "relais", "AGENT.md"))
-	s := string(data)
-	for _, want := range []string{"## 本地模式（模块 grammar）", filepath.Join(ld, "sides", "claude"), filepath.Join(ld, "sides", "codex"), "拿去讨论", "开工"} {
-		if !strings.Contains(s, want) {
-			t.Fatalf("AGENT.md 缺 %q", want)
-		}
+	if _, err := os.Stat(filepath.Join(proj, "relais", "mail", "m")); err != nil {
+		t.Fatal("默认不删文件")
 	}
-	m.CreateModule(api.LocalModuleRequest{Name: "grammar", Dir: proj})
-	data2, _ := os.ReadFile(filepath.Join(proj, "relais", "AGENT.md"))
-	if strings.Count(string(data2), "## 本地模式（模块 grammar）") != 1 {
-		t.Fatal("重复创建不应重复追加说明")
+	mgr.CreateModule(api.LocalModuleRequest{Name: "m", Dir: proj})
+	mgr.DeleteModule("m", true)
+	if _, err := os.Stat(filepath.Join(proj, "relais", "mail", "m")); err == nil {
+		t.Fatal("files=1 应删信箱目录")
 	}
-	if strings.Contains(string(data2), "relais draft") || strings.Contains(string(data2), "# Relais — agent 使用说明") {
-		t.Fatalf("本地模块的 AGENT.md 不应含联网说明:\n%s", data2)
+	if _, err := os.Stat(filepath.Join(proj, "relais", "PROTOCOL.md")); err != nil {
+		t.Fatal("删模块不应删协议")
 	}
-	if !strings.HasPrefix(string(data2), "# Relais — 本地模式 agent 说明") {
-		t.Fatalf("AGENT.md 应以本地开头:\n%s", data2)
+	if mods, _ := mgr.ListModules(); len(mods) != 0 {
+		t.Fatal("删除后列表应空")
 	}
-	for _, f := range []string{"CLAUDE.md", "AGENTS.md"} {
-		b, err := os.ReadFile(filepath.Join(proj, f))
-		if err != nil {
-			t.Fatalf("应创建 %s: %v", f, err)
-		}
-		if strings.Count(string(b), "<!-- relais-local -->") != 1 || !strings.Contains(string(b), "relais/AGENT.md") {
-			t.Fatalf("%s 指针块应恰好一次:\n%s", f, b)
+	for _, err := range []error{mgr.CloseModule("nope"), mgr.ReopenModule("nope"), mgr.DeleteModule("nope", true)} {
+		if !errors.Is(err, server.ErrLocalInvalid) {
+			t.Fatalf("不存在的模块应 ErrLocalInvalid: %v", err)
 		}
 	}
 }
 
-func TestCreateModuleKeepsExistingClaudeMD(t *testing.T) {
-	m, _ := newMgrForTest(t)
+func TestAttachAndConversations(t *testing.T) {
+	_, mgr := bootstrapped(t)
 	proj := t.TempDir()
-	orig := "# 我的项目\n\n已有规矩：别动 main。\n"
-	os.WriteFile(filepath.Join(proj, "CLAUDE.md"), []byte(orig), 0o644)
-	for i := 0; i < 2; i++ {
-		if _, err := m.CreateModule(api.LocalModuleRequest{Name: "grammar", Dir: proj}); err != nil {
-			t.Fatal(err)
-		}
+	t.Setenv("CODEX_HOME", fakeCodexHomeFor(t, proj))
+	t.Setenv("HOME", t.TempDir())
+	mgr.CreateModule(api.LocalModuleRequest{Name: "m", Dir: proj})
+	convs, err := mgr.Conversations("codex", proj)
+	if err != nil || len(convs) != 2 || convs[0].Name != "巡天主对话" {
+		t.Fatalf("conversations: %+v %v", convs, err)
 	}
-	b, _ := os.ReadFile(filepath.Join(proj, "CLAUDE.md"))
-	if !strings.HasPrefix(string(b), orig) || strings.Count(string(b), "<!-- relais-local -->") != 1 {
-		t.Fatalf("已有 CLAUDE.md 内容应保留且只追加一次指针块:\n%s", b)
+	if convs, err := mgr.Conversations("claude", proj); err != nil || convs == nil || len(convs) != 0 {
+		t.Fatalf("claude 侧无会话应为空数组: %+v %v", convs, err)
+	}
+	if _, err := mgr.Conversations("kimi", proj); !errors.Is(err, server.ErrLocalInvalid) {
+		t.Fatalf("未知侧应 invalid: %v", err)
+	}
+	m, err := mgr.AttachModule("m", api.LocalAttachRequest{Side: "codex"})
+	if err != nil || !m.Codex.Attached || m.Codex.ThreadName != "巡天主对话" {
+		t.Fatalf("attach 默认取最新: %+v %v", m, err)
+	}
+	st, _, _ := mgr.open()
+	lm, _ := st.LocalModuleByName("m")
+	st.Close()
+	if lm.CodexThreadID != "t-new" || lm.CodexThreadName != "巡天主对话" {
+		t.Fatalf("登记表应记下接入: %+v", lm)
+	}
+	if m, err := mgr.AttachModule("m", api.LocalAttachRequest{Side: "codex", Thread: "t-old"}); err != nil || m.Codex.ThreadName != "旧对话" {
+		t.Fatalf("按 id 接入（无名用标题）: %+v %v", m, err)
+	}
+	if _, err := mgr.AttachModule("m", api.LocalAttachRequest{Side: "codex", Thread: "不存在"}); !errors.Is(err, server.ErrLocalInvalid) {
+		t.Fatalf("找不到应拒绝: %v", err)
+	}
+	if _, err := mgr.AttachModule("m", api.LocalAttachRequest{Side: "claude"}); !errors.Is(err, server.ErrLocalInvalid) {
+		t.Fatalf("claude 侧不登记: %v", err)
+	}
+	n, err := mgr.CreateModule(api.LocalModuleRequest{Name: "n", Dir: proj, CodexThread: "t-old"})
+	if err != nil || !n.Codex.Attached {
+		t.Fatalf("创建时顺手接入: %+v %v", n, err)
 	}
 }
 
-func TestCreateModuleTwoModulesSameDirGuide(t *testing.T) {
-	m, _ := newMgrForTest(t)
+func TestRedeliverNeedsDaemon(t *testing.T) {
+	_, mgr := bootstrapped(t)
 	proj := t.TempDir()
-	for _, n := range []string{"grammar", "reader", "grammar", "reader"} {
-		if _, err := m.CreateModule(api.LocalModuleRequest{Name: n, Dir: proj}); err != nil {
-			t.Fatal(err)
-		}
+	mgr.CreateModule(api.LocalModuleRequest{Name: "m", Dir: proj})
+	if err := mgr.Redeliver("m"); err == nil {
+		t.Fatal("守卫未启动时应报错")
 	}
-	b, _ := os.ReadFile(filepath.Join(proj, "relais", "AGENT.md"))
-	s := string(b)
-	for _, n := range []string{"grammar", "reader"} {
-		if c := strings.Count(s, "## 本地模式（模块 "+n+"）"); c != 1 {
-			t.Fatalf("模块 %s 说明段应恰好一次，实为 %d:\n%s", n, c, s)
-		}
+	d, err := mgr.newDaemon(func(int64, *store.Message, string) {})
+	if err != nil {
+		t.Fatal(err)
 	}
-	if !strings.Contains(s, `RELAIS_CHANNEL="reader"`) || strings.Contains(s, "relais draft") {
-		t.Fatalf("reader 段缺失或混入联网说明:\n%s", s)
+	defer d.Store.Close()
+	if d.Users["hou"] == 0 || d.Users["claude"] == 0 || d.Users["codex"] == 0 {
+		t.Fatalf("守卫应知道三个账号: %+v", d.Users)
 	}
-	for _, f := range []string{"CLAUDE.md", "AGENTS.md"} {
-		b, _ := os.ReadFile(filepath.Join(proj, f))
-		if strings.Count(string(b), "<!-- relais-local -->") != 1 {
-			t.Fatalf("%s 指针块应恰好一次", f)
-		}
+	if refs, err := d.Modules(); err != nil || len(refs) != 1 {
+		t.Fatalf("守卫模块列表: %+v %v", refs, err)
+	}
+	if err := mgr.Redeliver("m"); err == nil || !strings.Contains(err.Error(), "Codex") {
+		t.Fatalf("没有需要投给 Codex 的信: %v", err)
+	}
+	if err := mgr.Redeliver("nope"); !errors.Is(err, server.ErrLocalInvalid) {
+		t.Fatalf("不存在的模块: %v", err)
 	}
 }
 
-func TestCreateModuleNetworkedAgentMDReplaced(t *testing.T) {
-	// 旧版本（M8 修复前）留下的 AGENT.md：联网开头 + 已有本地段；重跑后换开头、保留本地段
-	m, _ := newMgrForTest(t)
+func TestSettingsAndState(t *testing.T) {
+	_, mgr := bootstrapped(t)
+	s, _ := mgr.Settings()
+	if s.DefaultMode != "supervised" || s.DefaultCap != 8 {
+		t.Fatalf("默认设置: %+v", s)
+	}
+	fake := filepath.Join(t.TempDir(), "codex")
+	os.WriteFile(fake, []byte("#!/bin/sh\necho ok"), 0o755)
+	if err := mgr.PutSettings(api.LocalSettings{CodexPath: fake, DefaultMode: "autopilot", DefaultCap: 5, NotifyEveryLetter: true}); err != nil {
+		t.Fatal(err)
+	}
+	s, _ = mgr.Settings()
+	if s.CodexPath != fake || !s.CodexOK || s.DefaultMode != "autopilot" || s.DefaultCap != 5 || !s.NotifyEveryLetter {
+		t.Fatalf("settings: %+v", s)
+	}
+	for _, bad := range []api.LocalSettings{
+		{CodexPath: "/nope/codex", DefaultMode: "supervised", DefaultCap: 8},
+		{CodexPath: fake, DefaultMode: "yolo", DefaultCap: 8},
+		{CodexPath: fake, DefaultMode: "supervised", DefaultCap: 0},
+		{CodexPath: t.TempDir(), DefaultMode: "supervised", DefaultCap: 8},
+	} {
+		if err := mgr.PutSettings(bad); !errors.Is(err, server.ErrLocalInvalid) {
+			t.Fatalf("%+v 应拒绝: %v", bad, err)
+		}
+	}
+	if st := mgr.State(); st.Version == "" || !st.CodexOK || st.StartedAt.IsZero() {
+		t.Fatalf("state: %+v", st)
+	}
+	// 新建模块沿用默认模式与上限
+	m, err := mgr.CreateModule(api.LocalModuleRequest{Name: "m", Dir: t.TempDir()})
+	if err != nil || m.Mode != "autopilot" || m.RoundCap != 5 {
+		t.Fatalf("新模块应沿用默认: %+v %v", m, err)
+	}
+}
+
+func TestMigrateProjectsToml(t *testing.T) {
+	ld, mgr := bootstrapped(t)
 	proj := t.TempDir()
-	if _, err := m.CreateModule(api.LocalModuleRequest{Name: "grammar", Dir: proj}); err != nil {
+	// 模拟 M8 遗留：频道存在、sides/claude/projects.toml 有登记、local_modules 没有
+	st, _, _ := mgr.open()
+	ch, _ := st.CreateChannel("old")
+	for _, n := range []string{"claude", "codex", "hou"} {
+		u, _ := st.UserByName(n)
+		st.AddMember(ch.ID, u.ID)
+	}
+	u, _ := st.UserByName("hou")
+	st.SaveMessage(ch.ID, u.ID, nil, "旧信", "x", "")
+	st.Close()
+	os.MkdirAll(filepath.Join(ld, "sides", "claude"), 0o755)
+	registerProjectIn(filepath.Join(ld, "sides", "claude"), "old", proj)
+	if _, err := mgr.bootstrap("127.0.0.1:18080"); err != nil {
 		t.Fatal(err)
 	}
-	p := filepath.Join(proj, "relais", "AGENT.md")
-	b, _ := os.ReadFile(p)
-	legacy := strings.Replace(string(b), "# Relais — 本地模式 agent 说明", "# Relais — agent 使用说明\n\n用 relais draft 起草", 1)
-	os.WriteFile(p, []byte(legacy), 0o644)
-	if _, err := m.CreateModule(api.LocalModuleRequest{Name: "grammar", Dir: proj}); err != nil {
+	mods, _ := mgr.ListModules()
+	if len(mods) != 1 || mods[0].Name != "old" || mods[0].Dir != proj {
+		t.Fatalf("应导入旧登记: %+v", mods)
+	}
+	st, _, _ = mgr.open()
+	defer st.Close()
+	lm, _ := st.LocalModuleByName("old")
+	if lm.ArchivedSeq != 1 {
+		t.Fatalf("旧信不重新归档，archived_seq 应为当前最大 seq: %d", lm.ArchivedSeq)
+	}
+	if _, err := os.Stat(filepath.Join(proj, "relais", "PROTOCOL.md")); err != nil {
+		t.Fatal("升级应给旧模块写协议")
+	}
+	// 幂等：再跑一次不改 archived_seq
+	st.SetArchivedSeq(lm.ChannelID, 7)
+	if err := mgr.migrateProjectsToml(); err != nil {
 		t.Fatal(err)
 	}
-	b2, _ := os.ReadFile(p)
-	if strings.Contains(string(b2), "relais draft") || strings.Count(string(b2), "## 本地模式（模块 grammar）") != 1 {
-		t.Fatalf("旧联网开头应被替换、本地段保留:\n%s", b2)
+	if lm, _ := st.LocalModuleByName("old"); lm.ArchivedSeq != 7 {
+		t.Fatalf("已登记的不再导入: %d", lm.ArchivedSeq)
 	}
 }
 
@@ -323,7 +454,7 @@ func TestCreateModulePermissionDenied(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root 不受目录权限限制")
 	}
-	m, _ := newMgrForTest(t)
+	_, m := bootstrapped(t)
 	parent := t.TempDir()
 	dir := filepath.Join(parent, "proj")
 	os.MkdirAll(dir, 0o755)

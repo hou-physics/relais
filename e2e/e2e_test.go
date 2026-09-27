@@ -366,9 +366,6 @@ func TestAnchorM7Handshake(t *testing.T) {
 	if !strings.Contains(string(data), "最终措辞") || !strings.Contains(string(data), "owner: codex") {
 		t.Fatalf("锚点M7-1 结论内容错: %s", data)
 	}
-	if err := cli.RunConclusion(nil); err != nil {
-		t.Fatal(err)
-	}
 	// 现实中 hou 侧 bridge 早已拉走 wu 的附和（标已读、conclusion 不跑 hook）；e2e 里手动补这一步，否则在途检查会拦新议题
 	if l, _ := w.st.ListEnvelopes(duo.ID, w.users["hou"].ID, true, true); len(l) > 0 {
 		for _, um := range l {
@@ -465,7 +462,7 @@ func TestAnchorM7AutopilotAndKeyIsolation(t *testing.T) {
 	}
 }
 
-// M8 锚点：本地管理接口的隔离 + 模块创建→bridge 拉到消息的闭环
+// M8 锚点：本地管理接口的隔离 + 模块创建（M9：信箱 + 协议 + 指针块；收发闭环由 internal/local 守卫测试覆盖）
 func TestAnchorM8LocalConsole(t *testing.T) {
 	w := newWorld(t)
 	// 线上世界（未注入本地管理器）：/api/local/* 一律 404
@@ -478,7 +475,7 @@ func TestAnchorM8LocalConsole(t *testing.T) {
 	ld := t.TempDir()
 	t.Setenv("RELAIS_LOCAL_DIR", ld)
 	t.Setenv("HOME", t.TempDir())
-	if err := cli.RunLocal([]string{"bootstrap", "--claude", "/bin/echo", "--codex", "/bin/cat", "--listen", "127.0.0.1:18096", "--no-service"}); err != nil {
+	if err := cli.RunLocal([]string{"bootstrap", "--listen", "127.0.0.1:18096", "--no-service"}); err != nil {
 		t.Fatal(err)
 	}
 	st, err := store.Open(filepath.Join(ld, "data", "relais.db"))
@@ -490,9 +487,6 @@ func TestAnchorM8LocalConsole(t *testing.T) {
 	srv.SetLocal(cli.NewLocalManagerForTest(ld), "hou")
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
-	// 人登录（密码在 human.txt）
-	pw := readPassword(t, filepath.Join(ld, "human.txt"))
-	cookie := login(t, ts, "hou", pw)
 	// M9：本地控制台只查回环，不再区分人/agent 钥匙——回环 + agent token 也放行（守卫循环要用）
 	claudeU, _ := st.UserByName("claude")
 	req, _ = http.NewRequest("GET", ts.URL+"/api/local/modules", nil)
@@ -500,77 +494,41 @@ func TestAnchorM8LocalConsole(t *testing.T) {
 	if resp, _ := http.DefaultClient.Do(req); resp.StatusCode != 200 {
 		t.Fatalf("锚点M8-2（M9 更新：回环免人/agent 之分）agent 打本地接口应 200, got %d", resp.StatusCode)
 	}
-	// 人在网页新建模块
+	// 人在控制台新建模块（M9：回环免钥匙，无需登录）
 	proj := t.TempDir()
 	body, _ := json.Marshal(map[string]string{"name": "grammar", "dir": proj})
 	req, _ = http.NewRequest("POST", ts.URL+"/api/local/modules", bytes.NewReader(body))
-	req.AddCookie(&http.Cookie{Name: "relais_session", Value: cookie})
 	req.Header.Set("Content-Type", "application/json")
 	resp, _ := http.DefaultClient.Do(req)
 	if resp.StatusCode != 200 {
 		t.Fatalf("锚点M8-3 新建模块应 200, got %d", resp.StatusCode)
 	}
-	for _, f := range []string{"relais/config.toml", "relais/RULES.md", "relais/AGENT.md"} {
+	// M9：模块 = 信箱目录 + 协议 + 指针块；不再有 sides/、human.txt、RULES.md、AGENT.md
+	for _, f := range []string{"relais/PROTOCOL.md", "relais/mail/grammar/outbox", "CLAUDE.md", "AGENTS.md"} {
 		if _, err := os.Stat(filepath.Join(proj, f)); err != nil {
 			t.Fatalf("锚点M8-3 项目应有 %s", f)
 		}
 	}
-	// 人在网页开题（@codex 先回）→ codex 侧 bridge（重读登记表后）拉到。claude 侧被拒接话（由 codex 侧接话）
-	// 不在这里断言，由 internal/cli/localturn_test.go 覆盖
-	body, _ = json.Marshal(map[string]any{"to": []string{"claude", "codex"}, "summary": "议题", "body_md": "@codex 先回\n\n用什么缓存"})
-	req, _ = http.NewRequest("POST", ts.URL+"/api/channels/grammar/messages", bytes.NewReader(body))
-	req.AddCookie(&http.Cookie{Name: "relais_session", Value: cookie})
-	req.Header.Set("Content-Type", "application/json")
-	if resp, _ := http.DefaultClient.Do(req); resp.StatusCode != 200 {
-		t.Fatalf("锚点M8-4 开题应 200, got %d", resp.StatusCode)
+	for _, p := range []string{filepath.Join(ld, "sides"), filepath.Join(ld, "human.txt"), filepath.Join(proj, "relais", "AGENT.md")} {
+		if _, err := os.Stat(p); err == nil {
+			t.Fatalf("锚点M8-3 不应再生成 %s", p)
+		}
 	}
-	t.Setenv("RELAIS_CONFIG_DIR", filepath.Join(ld, "sides", "codex"))
-	cli.SaveGlobalForTest(ts.URL, mustUser(t, st, "codex").AgentToken, "codex") // 指向测试服务器而非 18096
-	c, _ := cli.NewClientForTest()
-	targets := cli.LoadBridgeTargetsForTest()
-	if len(targets) != 1 || targets[0].Channel != "grammar" || targets[0].Dir != proj {
-		t.Fatalf("锚点M8-4 codex 侧登记表应含 grammar: %+v", targets)
-	}
-	if n, err := cli.PollOnceForTest(c, "grammar", proj); err != nil || n != 1 {
-		t.Fatalf("锚点M8-4 codex 侧应拉到 1 封: %d %v", n, err)
-	}
-	entries, _ := os.ReadDir(filepath.Join(proj, "relais", "inbox"))
-	if len(entries) != 1 {
-		t.Fatalf("锚点M8-4 应落 1 封: %v", entries)
-	}
-	// 模块列表应能列出刚建的 grammar（M9：api.LocalModule 已删 BridgeAlive/LastHeartbeat 字段，
-	// 心跳/桥接存活改由别的机制表达，见 Task 9；这里只验证列表本身可达）。
 	req, _ = http.NewRequest("GET", ts.URL+"/api/local/modules", nil)
-	req.AddCookie(&http.Cookie{Name: "relais_session", Value: cookie})
 	resp, _ = http.DefaultClient.Do(req)
 	var mods []api.LocalModule
 	json.NewDecoder(resp.Body).Decode(&mods)
-	if len(mods) != 1 || mods[0].Name != "grammar" {
+	if len(mods) != 1 || mods[0].Name != "grammar" || mods[0].State != "未接入" {
 		t.Fatalf("锚点M8-5 模块列表应含 grammar: %+v", mods)
 	}
 	// 非回环 RemoteAddr → 401（M9：localOnly 只查回环，直接调 handler）
 	rr := httptest.NewRecorder()
 	r2 := httptest.NewRequest("GET", "/api/local/modules", nil)
-	r2.AddCookie(&http.Cookie{Name: "relais_session", Value: cookie})
 	r2.RemoteAddr = "192.168.1.9:5555"
 	srv.Handler().ServeHTTP(rr, r2)
 	if rr.Code != 401 {
 		t.Fatalf("锚点M8-6 非回环必须 401, got %d", rr.Code)
 	}
-}
-
-func readPassword(t *testing.T, path string) string {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, line := range strings.Split(string(data), "\n") {
-		if strings.HasPrefix(line, "初始密码: ") {
-			return strings.TrimSpace(strings.TrimPrefix(line, "初始密码: "))
-		}
-	}
-	t.Fatal("human.txt 无密码行")
-	return ""
 }
 
 func login(t *testing.T, ts *httptest.Server, user, pw string) string {

@@ -16,12 +16,3 @@ func TestTextContainsEssentials(t *testing.T) {
 		}
 	}
 }
-
-func TestLocalTextTeachesTwoCommands(t *testing.T) {
-	s := LocalText("claude", "grammar", "/x/sides/claude")
-	for _, want := range []string{"拿去讨论", "开工", `RELAIS_CONFIG_DIR="/x/sides/claude"`, `RELAIS_CHANNEL="grammar"`, "relais send", "relais/conclusions/", "grammar-", "RULES.md", "summary:", "claude"} {
-		if !strings.Contains(s, want) {
-			t.Fatalf("LocalText 缺 %q", want)
-		}
-	}
-}

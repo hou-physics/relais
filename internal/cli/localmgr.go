@@ -1,37 +1,42 @@
 package cli
 
 import (
+	"database/sql"
 	"errors"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
-	"runtime"
 	"slices"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/hou-physics/relais/internal/api"
-	"github.com/hou-physics/relais/internal/guide"
+	"github.com/hou-physics/relais/internal/local"
 	"github.com/hou-physics/relais/internal/server"
 	"github.com/hou-physics/relais/internal/store"
 )
 
-// localManager：本地模式的环境层（bootstrap）与模块层（增/列/关/规矩/设置）。
+// localManager：本地模式的环境层（bootstrap）与模块层（登记表、信箱、协议、指针块、接入、设置）。
 // CLI（relais local …）与服务器（/api/local/*，经 server.LocalManager 接口）共用这一份逻辑（D44）。
+// 服务器侧只写模块目录下的 relais/PROTOCOL.md、relais/mail/<模块>/，以及 CLAUDE.md/AGENTS.md 的标记块。
 type localManager struct {
-	ld     string
-	scPath string
+	ld, scPath string
+	startedAt  time.Time
+	daemon     *local.Daemon
+	shared     *store.Store // newDaemon 打开的长期句柄；非 nil 时各方法复用它而不是每次开关库
 }
 
 func newLocalManager(ld string) *localManager {
-	return &localManager{ld: ld, scPath: localServerConfigPath(ld)}
+	return &localManager{ld: ld, scPath: localServerConfigPath(ld), startedAt: time.Now()}
 }
 
 type bootstrapResult struct {
-	BaseURL, HumanUser, HumanPassword string
-	PasswordShown                     bool
+	BaseURL, HumanUser string
 }
 
 func invalid(format string, a ...any) error {
@@ -50,21 +55,51 @@ func (m *localManager) open() (*store.Store, *ServerConfig, error) {
 	return st, cfg, nil
 }
 
-func (m *localManager) sideDir(side string) string { return filepath.Join(m.ld, "sides", side) }
+// withStore：守卫已开长期句柄时复用它，否则临时开一个；release 只关临时的。
+func (m *localManager) withStore() (*store.Store, func(), error) {
+	if m.shared != nil {
+		return m.shared, func() {}, nil
+	}
+	st, _, err := m.open()
+	if err != nil {
+		return nil, nil, err
+	}
+	return st, func() { st.Close() }, nil
+}
 
-// bootstrap：只做"环境"——server.toml（含 local_dir）、三账号、两侧配置与 hook、设置；不建模块；幂等。
-func (m *localManager) bootstrap(listen, claudePath, codexPath string) (bootstrapResult, error) {
+func codexHome() string {
+	if h := os.Getenv("CODEX_HOME"); h != "" {
+		return h
+	}
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".codex")
+}
+
+func isExecutable(p string) bool {
+	st, err := os.Stat(p)
+	return err == nil && st.Mode().IsRegular() && st.Mode()&0o111 != 0
+}
+
+// detectCodex：PATH → ChatGPT.app 自带 → Codex 插件目录；都没有返回 ""。
+func detectCodex() string {
+	if p, err := exec.LookPath("codex"); err == nil {
+		return p
+	}
+	home, _ := os.UserHomeDir()
+	for _, p := range []string{"/Applications/ChatGPT.app/Contents/Resources/codex", filepath.Join(home, ".codex", "plugins", ".plugin-appserver", "codex")} {
+		if isExecutable(p) {
+			return p
+		}
+	}
+	return ""
+}
+
+// bootstrap：只做"环境"——server.toml（含 local_dir）、三账号、设置、旧登记迁移、已登记模块的协议与指针块；幂等。
+// 三个账号的密码随机生成、从不打印也不落盘：本地控制台走回环免钥匙（M9）。
+func (m *localManager) bootstrap(listen string) (bootstrapResult, error) {
 	var res bootstrapResult
 	if !isLoopbackListen(listen) {
 		return res, fmt.Errorf("本地模式只允许监听回环地址，得到 %q", listen)
-	}
-	agents := map[string]string{"claude": claudePath, "codex": codexPath}
-	for name, p := range agents {
-		abs, err := checkAgentPath(name, p)
-		if err != nil {
-			return res, err
-		}
-		agents[name] = abs
 	}
 	if err := os.MkdirAll(m.ld, 0o700); err != nil {
 		return res, err
@@ -84,71 +119,69 @@ func (m *localManager) bootstrap(listen, claudePath, codexPath string) (bootstra
 	defer st.Close()
 	res.BaseURL = cfg.BaseURL
 	res.HumanUser = localHuman
-	ensureUser := func(name, display string, admin bool) (*store.User, error) {
-		if u, err := st.UserByName(name); err == nil {
-			if admin && !u.IsAdmin { // 上次中途失败的补救
-				if err := st.SetAdmin(u.ID, true); err != nil {
-					return nil, err
+	for _, u := range []struct {
+		name, display string
+		admin         bool
+	}{{"claude", "Claude 侧", false}, {"codex", "Codex 侧", false}, {localHuman, "Hou", true}} {
+		usr, err := st.UserByName(u.name)
+		if err != nil {
+			if usr, err = st.CreateUser(u.name, u.display, newPassword()); err != nil {
+				return res, err
+			}
+		}
+		if u.admin && !usr.IsAdmin { // 含上次中途失败的补救
+			if err := st.SetAdmin(usr.ID, true); err != nil {
+				return res, err
+			}
+		}
+	}
+	defaults := map[string]func() string{
+		"local.codex_path":   detectCodex,
+		"local.default_mode": func() string { return "supervised" },
+		"local.default_cap":  func() string { return "8" },
+	}
+	for k, def := range defaults {
+		if v, _ := st.GetSetting(k); v == "" {
+			if d := def(); d != "" {
+				if err := st.SetSetting(k, d); err != nil {
+					return res, err
 				}
 			}
-			return u, nil
 		}
-		pw := newPassword()
-		u, err := st.CreateUser(name, display, pw)
-		if err != nil {
-			return nil, err
-		}
-		if admin {
-			if err := st.SetAdmin(u.ID, true); err != nil {
-				return nil, err
-			}
-			note := fmt.Sprintf("网页 %s 登录账号: %s\n初始密码: %s\n（本文件仅首次创建时写入；改密码后可删）\n", cfg.BaseURL, name, pw)
-			if err := os.WriteFile(filepath.Join(m.ld, "human.txt"), []byte(note), 0o600); err != nil {
-				return nil, err
-			}
-			res.HumanPassword, res.PasswordShown = pw, true
-		}
-		return u, nil
 	}
-	claudeU, err := ensureUser("claude", "Claude 侧", false)
+	if err := m.migrateWith(st); err != nil {
+		return res, err
+	}
+	lms, err := st.LocalModules()
 	if err != nil {
 		return res, err
 	}
-	codexU, err := ensureUser("codex", "Codex 侧", false)
-	if err != nil {
-		return res, err
-	}
-	if _, err := ensureUser(localHuman, "Hou", true); err != nil {
-		return res, err
-	}
-	for side, u := range map[string]*store.User{"claude": claudeU, "codex": codexU} {
-		if err := m.writeSide(side, cfg.BaseURL, u.AgentToken, agents[side]); err != nil {
-			return res, err
-		}
-	}
-	for k, v := range map[string]string{"local.claude_path": agents["claude"], "local.codex_path": agents["codex"]} {
-		if err := st.SetSetting(k, v); err != nil {
-			return res, err
-		}
-	}
-	if v, _ := st.GetSetting("local.default_mode"); v == "" {
-		if err := st.SetSetting("local.default_mode", "supervised"); err != nil {
-			return res, err
+	for _, lm := range lms {
+		if err := writeModuleFiles(lm.Dir, lm.Name); err != nil {
+			// 项目目录可能已被挪走/删除：不挡安装，只记日志
+			slog.Warn("本地模块文件未能更新", "module", lm.Name, "dir", lm.Dir, "err", err)
 		}
 	}
 	return res, nil
 }
 
-func checkAgentPath(name, p string) (string, error) {
-	if p == "" {
-		return "", invalid("没找到 %s：请指定路径（Codex 常在 ~/.codex/plugins/.plugin-appserver/codex）", name)
+// writeModuleFiles：信箱目录、协议（手改过的只记日志）、CLAUDE.md/AGENTS.md 指针块。
+func writeModuleFiles(dir, name string) error {
+	if err := local.EnsureMailDir(dir, name); err != nil {
+		return err
 	}
-	st, err := os.Stat(p)
-	if err != nil || !st.Mode().IsRegular() {
-		return "", invalid("%s 路径 %q 不存在或不是普通文件", name, p)
+	if err := local.WriteProtocol(dir); err != nil {
+		if !errors.Is(err, local.ErrProtocolCustom) {
+			return err
+		}
+		slog.Info("relais/PROTOCOL.md 已被手改，保留不覆盖", "dir", dir)
 	}
-	abs, _ := filepath.Abs(p)
-	return abs, nil
+	for _, f := range []string{"CLAUDE.md", "AGENTS.md"} {
+		if err := local.EnsurePointer(filepath.Join(dir, f)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // ensureLocalDirLine：server.toml 缺 local_dir 时追加一行（M7 生成的旧文件）。
@@ -166,19 +199,125 @@ func ensureLocalDirLine(scPath, ld string) error {
 	return os.WriteFile(scPath, append(data, []byte(fmt.Sprintf("local_dir = %q\n", ld))...), 0o600)
 }
 
-// writeSide：某一侧的 config.toml / setup.toml / hook。
-func (m *localManager) writeSide(side, baseURL, token, agentPath string) error {
-	d := m.sideDir(side)
-	if err := saveGlobalTo(d, &GlobalConfig{Server: baseURL, Token: token, Username: side}); err != nil {
-		return err
-	}
-	info := SetupInfo{OS: runtime.GOOS, Agent: side, AgentPath: agentPath, Mode: "auto"}
-	hp, err := writeLocalHook(d, info)
+// migrateProjectsToml：M8 的 sides/claude/projects.toml → local_modules（一次性，幂等）。
+// 旧频道的历史消息不重新归档：archived_seq 置为该频道当前最大 seq。
+func (m *localManager) migrateProjectsToml() error {
+	st, release, err := m.withStore()
 	if err != nil {
 		return err
 	}
-	info.HookPath = hp
-	return saveSetupTo(d, info)
+	defer release()
+	return m.migrateWith(st)
+}
+
+func (m *localManager) migrateWith(st *store.Store) error {
+	ps, err := loadProjectsIn(filepath.Join(m.ld, "sides", "claude"))
+	if err != nil {
+		return err
+	}
+	for _, p := range ps {
+		ch, err := st.ChannelByName(p.Channel)
+		if err != nil {
+			continue
+		}
+		if _, err := st.LocalModuleByName(p.Channel); !errors.Is(err, sql.ErrNoRows) {
+			if err != nil {
+				return err
+			}
+			continue
+		}
+		if err := st.UpsertLocalModule(ch.ID, p.Dir); err != nil {
+			return err
+		}
+		seq, err := st.MaxSeq(ch.ID)
+		if err != nil {
+			return err
+		}
+		if err := st.SetArchivedSeq(ch.ID, seq); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// moduleRefs：守卫用——未关闭的登记模块。
+func (m *localManager) moduleRefs() ([]local.ModuleRef, error) {
+	st, release, err := m.withStore()
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	lms, err := st.LocalModules()
+	if err != nil {
+		return nil, err
+	}
+	var out []local.ModuleRef
+	for _, lm := range lms {
+		if lm.ClosedAt != "" {
+			continue
+		}
+		if a, err := st.GetAuto(lm.ChannelID); err != nil || a.Closed {
+			continue
+		}
+		out = append(out, local.ModuleRef{ChannelID: lm.ChannelID, Name: lm.Name, Dir: lm.Dir})
+	}
+	return out, nil
+}
+
+func (m *localManager) users() (map[string]int64, error) {
+	st, release, err := m.withStore()
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	return usersIn(st)
+}
+
+func usersIn(st *store.Store) (map[string]int64, error) {
+	out := map[string]int64{}
+	for _, n := range []string{"claude", "codex", localHuman} {
+		u, err := st.UserByName(n)
+		if err != nil {
+			return nil, fmt.Errorf("账号 %s 不存在，请先运行安装（relais local bootstrap）", n)
+		}
+		out[n] = u.ID
+	}
+	return out, nil
+}
+
+// newDaemon：给 RunServe 用的守卫（Task 10 接线）。开一个长期 store 句柄，本管理器此后也复用它；
+// Redeliver 经 m.daemon 调用。
+func (m *localManager) newDaemon(publish func(int64, *store.Message, string)) (*local.Daemon, error) {
+	st, _, err := m.open()
+	if err != nil {
+		return nil, err
+	}
+	users, err := usersIn(st)
+	if err != nil {
+		st.Close()
+		return nil, err
+	}
+	m.shared = st
+	d := &local.Daemon{
+		Store:   st,
+		Modules: m.moduleRefs,
+		CodexPath: func() string {
+			if p, _ := st.GetSetting("local.codex_path"); p != "" {
+				return p
+			}
+			return detectCodex()
+		},
+		Publish: publish,
+		Notify:  func(title, body string) { notifyDesktop(title, body) },
+		NotifyEveryLetter: func() bool {
+			v, _ := st.GetSetting("local.notify_every_letter")
+			return v == "true"
+		},
+		Log:   slog.Default(),
+		Users: users,
+	}
+	m.daemon = d
+	return d, nil
 }
 
 func (m *localManager) ScanRepos() ([]api.LocalRepo, error) {
@@ -219,17 +358,11 @@ func (m *localManager) ScanRepos() ([]api.LocalRepo, error) {
 	return out, nil
 }
 
-func validModuleName(name string) bool {
-	return name != "" && !strings.ContainsAny(name, " /\\\t\n") && len(name) <= 64
-}
-
-// CreateModule：M9 接口签名（api.LocalModuleRequest）的适配层；req.CodexThread（M9 新字段，codex
-// 侧对话登记）留给 Task 9 处理，这里先忽略。
 func (m *localManager) CreateModule(req api.LocalModuleRequest) (api.LocalModule, error) {
 	name, dir := req.Name, req.Dir
 	var out api.LocalModule
-	if !validModuleName(name) {
-		return out, invalid("模块名 %q 不能为空、含空格或斜杠", name)
+	if !local.ValidModuleName(name) {
+		return out, invalid("模块名 %q 不能为空、首尾空格、含斜杠或 ..", name)
 	}
 	if !filepath.IsAbs(dir) || filepath.Clean(dir) != dir || slices.Contains(strings.Split(dir, string(filepath.Separator)), "..") {
 		return out, invalid("目录必须是绝对路径且不含 ..")
@@ -240,21 +373,19 @@ func (m *localManager) CreateModule(req api.LocalModuleRequest) (api.LocalModule
 		}
 		return out, invalid("目录 %q 不存在", dir)
 	}
-	if existing, err := m.moduleDir(name); err == nil && existing != dir {
-		return out, invalid("模块 %q 已绑定目录 %s，不能改绑；请关闭后用新名字创建", name, existing)
-	}
-	st, cfg, err := m.open()
+	st, release, err := m.withStore()
 	if err != nil {
 		return out, err
 	}
-	defer st.Close()
-	users := map[string]*store.User{}
-	for _, n := range []string{"claude", "codex", localHuman} {
-		u, err := st.UserByName(n)
-		if err != nil {
-			return out, fmt.Errorf("账号 %s 不存在，请先运行安装（relais local bootstrap）", n)
-		}
-		users[n] = u
+	defer release()
+	if lm, err := st.LocalModuleByName(name); err == nil && lm.Dir != dir {
+		return out, invalid("模块 %q 已绑定目录 %s，不能改绑；请删除后重建或换个名字", name, lm.Dir)
+	} else if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return out, err
+	}
+	users, err := usersIn(st)
+	if err != nil {
+		return out, err
 	}
 	ch, err := st.ChannelByName(name)
 	if err != nil {
@@ -262,250 +393,432 @@ func (m *localManager) CreateModule(req api.LocalModuleRequest) (api.LocalModule
 			return out, err
 		}
 	}
-	for _, u := range users {
-		if ok, _ := st.IsMember(ch.ID, u.ID); !ok {
-			if err := st.AddMember(ch.ID, u.ID); err != nil {
+	for _, uid := range users {
+		if ok, _ := st.IsMember(ch.ID, uid); !ok {
+			if err := st.AddMember(ch.ID, uid); err != nil {
 				return out, err
 			}
 		}
 	}
-	mode, _ := st.GetSetting("local.default_mode")
-	if mode == "" {
-		mode = "supervised"
-	}
-	if a, _ := st.GetAuto(ch.ID); !a.Enabled {
-		if err := st.SetAutoEnabled(ch.ID, true, 16); err != nil { // 16 条 = 8 回合（D39/D42 ①）
+	if a, _ := st.GetAuto(ch.ID); !a.Enabled { // 已开启的不重置（重复创建幂等、不清回合）
+		mode, capN := defaultModeCap(st)
+		if err := st.SetAutoEnabled(ch.ID, true, 2*capN); err != nil {
 			return out, err
 		}
 		if err := st.SetMode(ch.ID, mode); err != nil {
 			return out, err
 		}
 	}
-	for _, side := range []string{"claude", "codex"} {
-		if err := registerProjectIn(m.sideDir(side), name, dir); err != nil {
-			return out, err
-		}
-	}
-	freshAgent := false // initProject 刚写了联网版 AGENT.md，本地模式要换掉它的开头
-	if _, err := os.Stat(filepath.Join(dir, "relais", "config.toml")); os.IsNotExist(err) {
-		if _, err := initProject(dir, cfg.BaseURL, name, "claude"); err != nil {
-			return out, err
-		}
-		freshAgent = true
-	}
-	if err := os.MkdirAll(filepath.Join(dir, "relais", "conclusions"), 0o755); err != nil {
+	if err := st.UpsertLocalModule(ch.ID, dir); err != nil {
 		return out, err
 	}
-	rules := filepath.Join(dir, "relais", "RULES.md")
-	if _, err := os.Stat(rules); os.IsNotExist(err) {
-		if err := os.WriteFile(rules, []byte(rulesTemplate), 0o644); err != nil {
-			return out, err
-		}
-	}
-	if err := writeLocalAgentGuide(dir, m.ld, name, freshAgent); err != nil {
+	if err := writeModuleFiles(dir, name); err != nil {
 		return out, err
 	}
-	for _, f := range []string{"CLAUDE.md", "AGENTS.md"} {
-		if err := ensureLocalPointer(filepath.Join(dir, f)); err != nil {
+	lm, err := st.LocalModuleByName(name)
+	if err != nil {
+		return out, err
+	}
+	if req.CodexThread != "" {
+		if err := attachCodex(st, lm, req.CodexThread); err != nil {
+			return out, err
+		}
+		if lm, err = st.LocalModuleByName(name); err != nil {
 			return out, err
 		}
 	}
-	return m.moduleInfo(st, name, dir)
+	return m.moduleInfo(st, lm)
 }
 
-const (
-	networkedAgentHeader = "# Relais — agent 使用说明"
-	localAgentPreamble   = "# Relais — 本地模式 agent 说明\n\n本项目由 Relais 本地模式管理；下面按模块与侧列出工作脑该做的事。\n"
-	localPointerMarker   = "<!-- relais-local -->"
-	localPointerBlock    = "\n" + localPointerMarker + "\n## Relais 本地模式\n本项目接入了 Relais 本地模式。读 relais/AGENT.md 的「本地模式」各节：雇主说「把这个拿去讨论」或「开工」时，按那里的说明执行，不要反问。\n<!-- /relais-local -->\n"
-)
-
-// writeLocalAgentGuide：把本地模式的工作脑说明（两侧各一段，guide.LocalText）追加到 <dir>/relais/AGENT.md。
-// 标记按模块区分，同一目录的第二个模块会得到自己的说明段；同一模块重复创建不重复追加。
-// 本地模块不要联网版说明（relais draft/先给雇主过目会与本地流程矛盾）：initProject 刚写的，或文件仍以联网标题开头时，
-// 换成本地开头，只保留已有的「## 本地模式（模块 …）」各段。读失败（非不存在）直接报错，绝不覆盖。
-func writeLocalAgentGuide(dir, ld, name string, fresh bool) error {
-	p := filepath.Join(dir, "relais", "AGENT.md")
-	raw, err := os.ReadFile(p)
-	if err != nil && !os.IsNotExist(err) {
-		return err
+func defaultModeCap(st *store.Store) (string, int) {
+	mode, _ := st.GetSetting("local.default_mode")
+	if mode != "supervised" && mode != "autopilot" {
+		mode = "supervised"
 	}
-	s := string(raw)
-	if fresh || strings.HasPrefix(s, networkedAgentHeader) {
-		kept := ""
-		if i := strings.Index(s, "\n## 本地模式（模块 "); i >= 0 {
-			kept = s[i:]
+	capN := 8
+	if v, _ := st.GetSetting("local.default_cap"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			capN = n
 		}
-		s = localAgentPreamble + kept
-	} else if s == "" {
-		s = localAgentPreamble
 	}
-	marker := fmt.Sprintf("## 本地模式（模块 %s）", name)
-	if !strings.Contains(s, marker) {
-		s += "\n" + marker + "\n" + guide.LocalText("claude", name, filepath.Join(ld, "sides", "claude")) + guide.LocalText("codex", name, filepath.Join(ld, "sides", "codex"))
-	}
-	if s == string(raw) {
-		return nil
-	}
-	return os.WriteFile(p, []byte(s), 0o644)
+	return mode, capN
 }
 
-// ensureLocalPointer：Claude Code 读 CLAUDE.md、Codex 读 AGENTS.md，都不会自己去读 relais/AGENT.md；
-// 在两者末尾追加一个带标记的指针块（文件不存在就新建；已有标记则不动；只追加，不改其它内容）。
-func ensureLocalPointer(p string) error {
-	raw, err := os.ReadFile(p)
-	if err != nil && !os.IsNotExist(err) {
-		return err
+// moduleByName：登记表里的模块；不存在 → invalid（handler 回 400）。
+func moduleByName(st *store.Store, name string) (store.LocalModule, error) {
+	lm, err := st.LocalModuleByName(name)
+	if errors.Is(err, sql.ErrNoRows) {
+		return lm, invalid("模块 %q 不存在", name)
 	}
-	if strings.Contains(string(raw), localPointerMarker) {
-		return nil
-	}
-	f, err := os.OpenFile(p, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o644)
-	if err != nil {
-		return err
-	}
-	if _, err := f.WriteString(localPointerBlock); err != nil {
-		f.Close()
-		return err
-	}
-	return f.Close()
+	return lm, err
 }
 
-func (m *localManager) moduleInfo(st *store.Store, name, dir string) (api.LocalModule, error) {
-	ch, err := st.ChannelByName(name)
-	if err != nil {
-		return api.LocalModule{}, invalid("模块 %q 不存在", name)
-	}
-	a, err := st.GetAuto(ch.ID)
+func parseRFC3339(s string) time.Time {
+	t, _ := time.Parse(time.RFC3339, s)
+	return t
+}
+
+// moduleInfo：登记表 + channel_auto + 信箱文件 → 控制台看到的一行（spec §7.4）。
+func (m *localManager) moduleInfo(st *store.Store, lm store.LocalModule) (api.LocalModule, error) {
+	a, err := st.GetAuto(lm.ChannelID)
 	if err != nil {
 		return api.LocalModule{}, err
 	}
-	state := "running"
-	switch {
-	case a.Closed:
-		state = "closed"
-	case a.KickedOff:
-		state = "kicked_off"
-	case a.Resolved:
-		state = "resolved"
-	case a.NeedsHumanQ != "":
-		state = "needs_human"
-	case a.Paused:
-		state = "paused"
-	}
-	// M9 的 LocalModule 已不再有 Conclusions/BridgeAlive/LastHeartbeat 字段（改由
-	// outbox/守卫循环那一套状态取代，Task 9 重写）；这里先只填还能对上的字段。
-	return api.LocalModule{Name: name, Dir: dir, Mode: a.Mode, Round: store.Round(a.RoundCount), RoundCap: store.Round(a.Cap),
-		State: state, NeedsHumanQ: a.NeedsHumanQ}, nil
-}
+	md := local.MailDir(lm.Dir, lm.Name)
+	out := api.LocalModule{Name: lm.Name, Dir: lm.Dir, Mode: a.Mode, Round: store.Round(a.RoundCount), RoundCap: store.Round(a.Cap),
+		NeedsHumanQ: a.NeedsHumanQ, Closed: lm.ClosedAt != "" || a.Closed}
 
-// conclusionIDFor：文件名是否为 <channel>-<26位ULID>.md（与 conclusion.go 的规则一致）。
-func conclusionIDFor(filename, channel string) (string, bool) {
-	rest := strings.TrimSuffix(strings.TrimPrefix(filename, channel+"-"), ".md")
-	if !strings.HasPrefix(filename, channel+"-") || !strings.HasSuffix(filename, ".md") || len(rest) != ulidLen || strings.Contains(rest, "-") {
-		return "", false
+	letters, _ := local.ListLetters(md) // 目录不在（项目被挪走）时按空信箱显示
+	var last *local.Letter
+	for i := len(letters) - 1; i >= 0; i-- {
+		if letters[i].Kind != "kickoff" {
+			last = &letters[i]
+			break
+		}
 	}
-	return rest, true
+	if last != nil {
+		out.LastSeq, out.LastFrom, out.LastAt = last.Seq, last.From, last.Date
+	}
+
+	ss := local.ReadSideStatus(md, local.PIDAlive)
+	out.Claude = api.LocalSide{Waiting: ss.ClaudeWaiting, WaitSince: ss.ClaudeWaitSince}
+	if ss.ClaudeSessionID != "" {
+		if home, err := os.UserHomeDir(); err == nil {
+			if sess, err := local.ListClaudeSessions(home, ""); err == nil {
+				for _, s := range sess {
+					if s.ID == ss.ClaudeSessionID {
+						out.Claude.SessionName = s.Name
+						break
+					}
+				}
+			}
+		}
+	}
+	out.Codex = api.LocalSide{Attached: ss.CodexAttached, ThreadName: ss.CodexThreadName, AttachedAt: ss.CodexAttachedAt,
+		DeliveryError: lm.CodexDeliveryError} // 登记表上的错误在重新接入/投递成功时清掉，比最后一条投递记录更贴近"现在"
+	if _, status, _, at, err := st.LastDelivery(lm.ChannelID, "codex"); err == nil {
+		out.Codex.LastDelivery, out.Codex.DeliveryAt = status, parseRFC3339(at)
+	}
+
+	if a.Resolved {
+		pc := &api.LocalConclusion{AwaitingConfirm: a.Mode == "supervised"}
+		if seq, err := st.SeqOf(a.ResolutionMsgID); err == nil {
+			pc.Seq = seq
+			pc.Path = filepath.Join(md, local.ConclusionName(seq))
+			for _, l := range letters {
+				if l.Seq == seq && l.Kind != "kickoff" {
+					pc.Owner, pc.Summary = l.Owner, l.Summary
+				}
+			}
+		}
+		out.PendingConclusion = pc
+	}
+
+	if entries, err := os.ReadDir(filepath.Join(md, "outbox")); err == nil {
+		for _, e := range entries {
+			if !e.IsDir() && strings.HasSuffix(e.Name(), ".rejected") {
+				out.Rejected = append(out.Rejected, e.Name())
+			}
+		}
+	}
+
+	waitingYou := a.NeedsHumanQ != "" || out.Codex.DeliveryError != "" || len(out.Rejected) > 0
+	switch {
+	case out.Closed:
+		out.State = "已关闭"
+	case a.KickedOff:
+		out.State = "已开工"
+	case a.Resolved && a.Mode == "supervised":
+		out.State = "等你"
+	case a.Resolved:
+		out.State = "已握手"
+	case waitingYou:
+		out.State = "等你"
+	case !out.Claude.Waiting && !out.Codex.Attached && out.LastSeq == 0:
+		out.State = "未接入"
+	default:
+		out.State = "讨论中"
+	}
+
+	switch {
+	case out.Closed || a.KickedOff:
+	case a.Resolved:
+		if out.PendingConclusion != nil {
+			out.WaitingFor = out.PendingConclusion.Owner
+		}
+	case a.NeedsHumanQ != "":
+		out.WaitingFor = "user"
+	case last != nil && last.From == localHuman:
+		body := ""
+		if data, err := os.ReadFile(last.Path); err == nil {
+			_, body, _ = local.ParseLetter(data)
+		}
+		out.WaitingFor = local.FirstResponder(*last, body, letters)
+	case last != nil && (last.From == "claude" || last.From == "codex"):
+		out.WaitingFor = map[string]string{"claude": "codex", "codex": "claude"}[last.From]
+	}
+	return out, nil
 }
 
 func (m *localManager) ListModules() ([]api.LocalModule, error) {
-	st, _, err := m.open()
+	st, release, err := m.withStore()
 	if err != nil {
 		return nil, err
 	}
-	defer st.Close()
-	dirs := map[string]string{}
-	if ps, err := loadProjectsIn(m.sideDir("claude")); err == nil {
-		for _, p := range ps {
-			dirs[p.Channel] = p.Dir
-		}
-	}
-	chs, err := st.AllChannels()
+	defer release()
+	lms, err := st.LocalModules()
 	if err != nil {
 		return nil, err
 	}
 	out := []api.LocalModule{}
-	for _, c := range chs {
-		ch, err := st.ChannelByName(c.Name)
-		if err != nil {
-			continue
-		}
-		a, _ := st.GetAuto(ch.ID)
-		if !a.Enabled && !a.Closed {
-			continue
-		}
-		info, err := m.moduleInfo(st, c.Name, dirs[c.Name])
+	for _, lm := range lms {
+		info, err := m.moduleInfo(st, lm)
 		if err != nil {
 			return nil, err
 		}
 		out = append(out, info)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out, nil
 }
 
-func (m *localManager) CloseModule(name string) error {
-	st, _, err := m.open()
+func (m *localManager) PatchModule(name string, p api.LocalModulePatch) (api.LocalModule, error) {
+	var out api.LocalModule
+	if p.Mode != "" && p.Mode != "supervised" && p.Mode != "autopilot" {
+		return out, invalid("模式只能是 supervised 或 autopilot")
+	}
+	if p.RoundCap < 0 {
+		return out, invalid("回合上限必须大于 0")
+	}
+	st, release, err := m.withStore()
 	if err != nil {
-		return err
+		return out, err
 	}
-	defer st.Close()
-	ch, err := st.ChannelByName(name)
+	defer release()
+	lm, err := moduleByName(st, name)
 	if err != nil {
-		return invalid("模块 %q 不存在", name)
+		return out, err
 	}
-	if err := st.CloseChannel(ch.ID); err != nil {
-		return err
-	}
-	for _, side := range []string{"claude", "codex"} {
-		if err := sessionClear(m.sideDir(side), name); err != nil {
-			return err
+	if p.Name != "" && p.Name != name {
+		if err := renameModule(st, lm, p.Name); err != nil {
+			return out, err
 		}
+		name = p.Name
+	}
+	if p.Mode != "" {
+		if err := st.SetMode(lm.ChannelID, p.Mode); err != nil {
+			return out, err
+		}
+	}
+	if p.RoundCap > 0 {
+		if err := st.SetCap(lm.ChannelID, 2*p.RoundCap); err != nil {
+			return out, err
+		}
+	}
+	if lm, err = st.LocalModuleByName(name); err != nil {
+		return out, err
+	}
+	return m.moduleInfo(st, lm)
+}
+
+// renameModule：频道改名 + 信箱目录跟着挪；挪目录失败时把频道名改回去。
+func renameModule(st *store.Store, lm store.LocalModule, newName string) error {
+	if !local.ValidModuleName(newName) {
+		return invalid("模块名 %q 不能为空、首尾空格、含斜杠或 ..", newName)
+	}
+	oldDir, newDir := local.MailDir(lm.Dir, lm.Name), local.MailDir(lm.Dir, newName)
+	if _, err := os.Lstat(newDir); err == nil {
+		return invalid("目录 %s 已存在，不能改名为 %q", newDir, newName)
+	}
+	if err := st.RenameChannel(lm.ChannelID, newName); err != nil {
+		if errors.Is(err, store.ErrChannelExists) {
+			return invalid("模块名 %q 已被占用", newName)
+		}
+		return err
+	}
+	if err := os.Rename(oldDir, newDir); err != nil {
+		if os.IsNotExist(err) { // 旧信箱不在（项目被清理过）：直接建新的
+			if err := local.EnsureMailDir(lm.Dir, newName); err == nil {
+				return nil
+			}
+		}
+		if rbErr := st.RenameChannel(lm.ChannelID, lm.Name); rbErr != nil {
+			return fmt.Errorf("挪信箱目录失败（%v），且频道名回滚失败: %w", err, rbErr)
+		}
+		return invalid("挪信箱目录失败：%v", err)
 	}
 	return nil
 }
 
-func (m *localManager) moduleDir(name string) (string, error) {
-	ps, err := loadProjectsIn(m.sideDir("claude"))
+func (m *localManager) CloseModule(name string) error {
+	st, release, err := m.withStore()
 	if err != nil {
-		return "", err
+		return err
 	}
-	for _, p := range ps {
-		if p.Channel == name {
-			return p.Dir, nil
-		}
+	defer release()
+	lm, err := moduleByName(st, name)
+	if err != nil {
+		return err
 	}
-	return "", invalid("模块 %q 不存在", name)
+	if err := st.CloseChannel(lm.ChannelID); err != nil {
+		return err
+	}
+	return st.SetLocalClosed(lm.ChannelID, time.Now().UTC().Format(time.RFC3339))
 }
 
-// Settings/PutSettings：M9 的 api.LocalSettings 去掉了 ClaudePath（不再是 codex 之外可经此接口
-// 改的字段）、加了 CodexOK/DefaultCap/NotifyEveryLetter。这里只做字段级适配，语义（比如
-// default_cap/notify 具体怎么用）留给 Task 9。
+func (m *localManager) ReopenModule(name string) error {
+	st, release, err := m.withStore()
+	if err != nil {
+		return err
+	}
+	defer release()
+	lm, err := moduleByName(st, name)
+	if err != nil {
+		return err
+	}
+	if err := st.ReopenChannel(lm.ChannelID); err != nil {
+		return err
+	}
+	return st.SetLocalClosed(lm.ChannelID, "")
+}
+
+// DeleteModule：删频道与登记；files 时再删信箱目录（只删 <dir>/relais/mail/<模块>，先核对路径）。
+func (m *localManager) DeleteModule(name string, files bool) error {
+	st, release, err := m.withStore()
+	if err != nil {
+		return err
+	}
+	defer release()
+	lm, err := moduleByName(st, name)
+	if err != nil {
+		return err
+	}
+	md := local.MailDir(lm.Dir, lm.Name)
+	if files {
+		root := filepath.Join(lm.Dir, "relais", "mail")
+		rel, err := filepath.Rel(root, md)
+		if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || strings.ContainsRune(rel, filepath.Separator) {
+			return invalid("信箱路径 %s 不在 %s 下，拒绝删除", md, root)
+		}
+	}
+	if err := st.DeleteChannel(lm.ChannelID); err != nil {
+		return err
+	}
+	if files {
+		return os.RemoveAll(md)
+	}
+	return nil
+}
+
+func (m *localManager) Conversations(side, dir string) ([]api.LocalConversation, error) {
+	out := []api.LocalConversation{}
+	switch side {
+	case "codex":
+		ts, err := local.ListCodexThreads(codexHome(), dir)
+		if err != nil {
+			return nil, err
+		}
+		for _, t := range ts {
+			out = append(out, api.LocalConversation{ID: t.ID, Name: t.Name, Title: t.Title, Cwd: t.Cwd, UpdatedAt: t.UpdatedAt})
+		}
+	case "claude":
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return nil, err
+		}
+		ss, err := local.ListClaudeSessions(home, dir)
+		if err != nil {
+			return nil, err
+		}
+		for _, s := range ss {
+			out = append(out, api.LocalConversation{ID: s.ID, Name: s.Name, Cwd: s.Cwd, Status: s.Status, UpdatedAt: s.UpdatedAt})
+		}
+	default:
+		return nil, invalid("side 只能是 claude 或 codex")
+	}
+	return out, nil
+}
+
+// AttachModule：登记 codex 侧接入的对话（claude 侧的接入就是在对话里跑 relais wait，不登记）。
+func (m *localManager) AttachModule(name string, req api.LocalAttachRequest) (api.LocalModule, error) {
+	var out api.LocalModule
+	if req.Side != "codex" {
+		return out, invalid("只有 codex 侧需要登记接入；claude 侧在对话里运行 relais wait 即可")
+	}
+	st, release, err := m.withStore()
+	if err != nil {
+		return out, err
+	}
+	defer release()
+	lm, err := moduleByName(st, name)
+	if err != nil {
+		return out, err
+	}
+	if err := attachCodex(st, lm, req.Thread); err != nil {
+		return out, err
+	}
+	if lm, err = st.LocalModuleByName(name); err != nil {
+		return out, err
+	}
+	return m.moduleInfo(st, lm)
+}
+
+// attachCodex：thread 空 → 该目录最新的 Codex 对话；否则按 id 或对话名精确匹配。写 .attach-codex + 登记表。
+func attachCodex(st *store.Store, lm store.LocalModule, thread string) error {
+	var t local.Thread
+	var err error
+	if thread == "" {
+		t, err = local.FindCodexThread(codexHome(), lm.Dir)
+	} else {
+		t, err = local.CodexThreadByIDOrName(codexHome(), thread)
+	}
+	if err != nil {
+		return invalid("%v", err)
+	}
+	name := t.Name
+	if name == "" {
+		name = t.Title
+	}
+	if err := local.EnsureMailDir(lm.Dir, lm.Name); err != nil {
+		return err
+	}
+	at := time.Now().UTC().Truncate(time.Second)
+	if err := local.WriteAttach(local.MailDir(lm.Dir, lm.Name), local.Attach{ThreadID: t.ID, Name: name, Cwd: t.Cwd, At: at}); err != nil {
+		return err
+	}
+	return st.SetCodexAttach(lm.ChannelID, t.ID, name, at.Format(time.RFC3339))
+}
+
+func (m *localManager) Redeliver(name string) error {
+	st, release, err := m.withStore()
+	if err != nil {
+		return err
+	}
+	lm, err := moduleByName(st, name)
+	release()
+	if err != nil {
+		return err
+	}
+	if m.daemon == nil {
+		return errors.New("守卫未启动（relais serve 未带本地模式运行），无法重投")
+	}
+	return m.daemon.Redeliver(lm.ChannelID)
+}
+
 func (m *localManager) Settings() (api.LocalSettings, error) {
-	st, _, err := m.open()
+	st, release, err := m.withStore()
 	if err != nil {
 		return api.LocalSettings{}, err
 	}
-	defer st.Close()
+	defer release()
 	var s api.LocalSettings
 	s.CodexPath, _ = st.GetSetting("local.codex_path")
-	s.DefaultMode, _ = st.GetSetting("local.default_mode")
-	if s.DefaultMode == "" {
-		s.DefaultMode = "supervised"
+	if s.CodexPath == "" {
+		s.CodexPath = detectCodex()
 	}
-	if capStr, _ := st.GetSetting("local.default_cap"); capStr != "" {
-		if n, err := strconv.Atoi(capStr); err == nil {
-			s.DefaultCap = n
-		}
-	}
-	if s.DefaultCap == 0 {
-		s.DefaultCap = 8
-	}
-	notify, _ := st.GetSetting("local.notify_every_letter")
-	s.NotifyEveryLetter = notify == "true"
-	if fi, err := os.Stat(s.CodexPath); err == nil && fi.Mode().IsRegular() {
-		s.CodexOK = true
-	}
+	s.CodexOK = s.CodexPath != "" && isExecutable(s.CodexPath)
+	s.DefaultMode, s.DefaultCap = defaultModeCap(st)
+	v, _ := st.GetSetting("local.notify_every_letter")
+	s.NotifyEveryLetter = v == "true"
 	return s, nil
 }
 
@@ -513,65 +826,37 @@ func (m *localManager) PutSettings(s api.LocalSettings) error {
 	if s.DefaultMode != "supervised" && s.DefaultMode != "autopilot" {
 		return invalid("默认模式只能是 supervised 或 autopilot")
 	}
-	codexAbs, err := checkAgentPath("codex", s.CodexPath)
+	if s.DefaultCap <= 0 {
+		return invalid("默认回合上限必须大于 0")
+	}
+	codexPath := s.CodexPath
+	if codexPath != "" {
+		if fi, err := os.Stat(codexPath); err != nil || !fi.Mode().IsRegular() {
+			return invalid("codex 路径 %q 不存在或不是普通文件", codexPath)
+		}
+		codexPath, _ = filepath.Abs(codexPath)
+	}
+	st, release, err := m.withStore()
 	if err != nil {
 		return err
 	}
-	st, cfg, err := m.open()
-	if err != nil {
-		return err
-	}
-	defer st.Close()
-	cap := s.DefaultCap
-	if cap <= 0 {
-		cap = 8
-	}
+	defer release()
 	notify := "false"
 	if s.NotifyEveryLetter {
 		notify = "true"
 	}
 	for k, v := range map[string]string{
-		"local.codex_path": codexAbs, "local.default_mode": s.DefaultMode,
-		"local.default_cap": strconv.Itoa(cap), "local.notify_every_letter": notify,
+		"local.codex_path": codexPath, "local.default_mode": s.DefaultMode,
+		"local.default_cap": strconv.Itoa(s.DefaultCap), "local.notify_every_letter": notify,
 	} {
 		if err := st.SetSetting(k, v); err != nil {
 			return err
 		}
 	}
-	u, err := st.UserByName("codex")
-	if err != nil {
-		return err
-	}
-	return m.writeSide("codex", cfg.BaseURL, u.AgentToken, codexAbs)
-}
-
-// ---- M9 Task 9 未完成：以下方法只满足 server.LocalManager 接口以保持编译通过，
-// 真实实现（模块改名/重开/删除、对话列表、codex 接入登记、重投、汇总状态）由 Task 9 补齐。
-
-func (m *localManager) PatchModule(name string, p api.LocalModulePatch) (api.LocalModule, error) {
-	return api.LocalModule{}, errors.New("M9 Task 9 未完成")
-}
-
-func (m *localManager) ReopenModule(name string) error {
-	return errors.New("M9 Task 9 未完成")
-}
-
-func (m *localManager) DeleteModule(name string, files bool) error {
-	return errors.New("M9 Task 9 未完成")
-}
-
-func (m *localManager) Conversations(side, dir string) ([]api.LocalConversation, error) {
-	return nil, errors.New("M9 Task 9 未完成")
-}
-
-func (m *localManager) AttachModule(name string, req api.LocalAttachRequest) (api.LocalModule, error) {
-	return api.LocalModule{}, errors.New("M9 Task 9 未完成")
-}
-
-func (m *localManager) Redeliver(name string) error {
-	return errors.New("M9 Task 9 未完成")
+	return nil
 }
 
 func (m *localManager) State() api.LocalState {
-	return api.LocalState{}
+	s, _ := m.Settings()
+	return api.LocalState{Version: server.Version, StartedAt: m.startedAt, CodexOK: s.CodexOK}
 }
