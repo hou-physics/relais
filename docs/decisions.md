@@ -18,6 +18,9 @@
   6. CLI 补了五处执行期发现的边界：未登记模块的信箱目录下已有旧信时 `CreateModule` 直接拒绝，否则新频道 `seq` 从 1 起会覆盖用户保留下来的旧信；删信箱前先解析符号链接，避免误删链接目标；`relais serve` 改为按 `ctx` 驱动、可优雅停止，测试才能反复起停不泄漏进程；`post`/`wait`/`attach` 的标志允许放在位置参数前后，不强制顺序；`relais wait` 命令输出末尾加一句提醒，处理完这封信要再运行一次。
   7. 常驻服务只保留一个 `com.relais.local.serve`，`bootstrap` 升级时自动卸掉旧版本装的两个 bridge plist，不留孤儿常驻。
   8. 本地控制台页面补了两处交互细节：`[hidden]` 属性要能覆盖 flex 布局（不然元素该藏藏不住）；轮询刷新时不覆盖用户正在输入中的内容。
+  9. `CodexThreadByIDOrName`：`relais attach --thread` 与控制台点选按 id 或对话名精确匹配（直接 SQL 取一条），不再从截断为 20 条的列表里找。
+  10. `SetCap`/`MaxSeq`/`SentKeyExists`：store 新增三个方法——改上限只改 `cap` 不清回合数；迁移旧登记表时 `archived_seq = MaxSeq`（旧信不重新归档）；`sent_keys` 存在性检查用于 outbox 重放。
+  11. `GET /{$}` 路由：有 `local_dir` 时根路径与 `/index.html` 改为本地控制台页面，线上仍是联网页面（`GET /{$}` 只匹配根，优先于 `GET /`）。
 - **状态**：live（v0.7.0-m9）。
 - **反转触发**：Codex 升级改了 `queue`/`threads` 表 → Codex 侧退回门铃；Claude Code 强杀长时间后台命令 → `wait` 加超时循环。
 
