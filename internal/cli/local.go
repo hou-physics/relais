@@ -154,9 +154,13 @@ func installLocalServices(ld, scPath string) error {
 			map[string]string{"RELAIS_CONFIG_DIR": d, "HOME": os.Getenv("HOME"), "PATH": os.Getenv("PATH")}})
 	}
 	for _, v := range svcs {
-		if !shouldInstallPlist(plistPathFor(v.label)) {
+		p := plistPathFor(v.label)
+		if !plistNeedsInstall(p, relais) {
 			fmt.Fprintf(os.Stderr, "常驻 %s 已存在，跳过\n", v.label)
 			continue
+		}
+		if _, err := os.Stat(p); err == nil {
+			fmt.Fprintf(os.Stderr, "常驻 %s 指向旧二进制，重装\n", v.label)
 		}
 		if _, err := installPlist(v.label, v.args, v.env); err != nil {
 			return err
@@ -230,10 +234,14 @@ func plistPathFor(label string) string {
 	return filepath.Join(home, "Library", "LaunchAgents", label+".plist")
 }
 
-// shouldInstallPlist：plist 已存在（服务已装、多半在跑）则不重装，避免重跑 init 时 bootout/重载打断正在跑的循环。
-func shouldInstallPlist(path string) bool {
-	_, err := os.Stat(path)
-	return os.IsNotExist(err)
+// plistNeedsInstall：plist 不存在，或它的程序路径不是当前二进制（升级后安装位置变了，如 Intel Mac 的
+// /usr/local/bin）时需要（重）装；已指向当前二进制则不动，避免重跑时重载打断正在跑的循环。
+func plistNeedsInstall(path, exe string) bool {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return true
+	}
+	return !strings.Contains(string(data), "<string>"+xmlEscape(exe)+"</string>")
 }
 
 func waitListen(addr string, d time.Duration) {

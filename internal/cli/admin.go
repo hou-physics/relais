@@ -58,6 +58,10 @@ func RunServe(args []string) error {
 		return err
 	}
 	defer st.Close()
+	if cfg.LocalDir != "" && !isLoopbackListen(cfg.Listen) {
+		// 本地管理接口能写任意目录、起工作脑，绝不能暴露在非回环地址上（spec §11）
+		return fmt.Errorf("server.toml 设了 local_dir（本地模式），但 listen = %q 不是回环地址；本地模式只允许 127.0.0.1 或 localhost，拒绝启动", cfg.Listen)
+	}
 	fmt.Printf("relais 服务启动: %s (base_url=%s)\n", cfg.Listen, cfg.BaseURL)
 	srv := server.New(st, cfg.BaseURL, cfg.DataDir)
 	if cfg.LocalDir != "" {

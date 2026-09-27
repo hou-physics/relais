@@ -86,6 +86,7 @@ func TestScanRepos(t *testing.T) {
 	mk(".hidden/proj-d", true) // 隐藏目录，不取
 	mk("Library/proj-x", true) // macOS 受 TCC 保护的目录，不进
 	mk("Music/proj-y", true)
+	mk("Documents/proj-z", true) // 文稿受 TCC 保护，扫描不进
 	os.Chtimes(filepath.Join(home, "proj-a"), time.Now().Add(-time.Hour), time.Now().Add(-time.Hour))
 	m, _ := newMgrForTest(t)
 	repos, err := m.ScanRepos()
@@ -255,5 +256,100 @@ func TestCreateModuleWritesLocalGuideForBothSides(t *testing.T) {
 	data2, _ := os.ReadFile(filepath.Join(proj, "relais", "AGENT.md"))
 	if strings.Count(string(data2), "## 本地模式（模块 grammar）") != 1 {
 		t.Fatal("重复创建不应重复追加说明")
+	}
+	if strings.Contains(string(data2), "relais draft") || strings.Contains(string(data2), "# Relais — agent 使用说明") {
+		t.Fatalf("本地模块的 AGENT.md 不应含联网说明:\n%s", data2)
+	}
+	if !strings.HasPrefix(string(data2), "# Relais — 本地模式 agent 说明") {
+		t.Fatalf("AGENT.md 应以本地开头:\n%s", data2)
+	}
+	for _, f := range []string{"CLAUDE.md", "AGENTS.md"} {
+		b, err := os.ReadFile(filepath.Join(proj, f))
+		if err != nil {
+			t.Fatalf("应创建 %s: %v", f, err)
+		}
+		if strings.Count(string(b), "<!-- relais-local -->") != 1 || !strings.Contains(string(b), "relais/AGENT.md") {
+			t.Fatalf("%s 指针块应恰好一次:\n%s", f, b)
+		}
+	}
+}
+
+func TestCreateModuleKeepsExistingClaudeMD(t *testing.T) {
+	m, _ := newMgrForTest(t)
+	proj := t.TempDir()
+	orig := "# 我的项目\n\n已有规矩：别动 main。\n"
+	os.WriteFile(filepath.Join(proj, "CLAUDE.md"), []byte(orig), 0o644)
+	for i := 0; i < 2; i++ {
+		if _, err := m.CreateModule("grammar", proj); err != nil {
+			t.Fatal(err)
+		}
+	}
+	b, _ := os.ReadFile(filepath.Join(proj, "CLAUDE.md"))
+	if !strings.HasPrefix(string(b), orig) || strings.Count(string(b), "<!-- relais-local -->") != 1 {
+		t.Fatalf("已有 CLAUDE.md 内容应保留且只追加一次指针块:\n%s", b)
+	}
+}
+
+func TestCreateModuleTwoModulesSameDirGuide(t *testing.T) {
+	m, _ := newMgrForTest(t)
+	proj := t.TempDir()
+	for _, n := range []string{"grammar", "reader", "grammar", "reader"} {
+		if _, err := m.CreateModule(n, proj); err != nil {
+			t.Fatal(err)
+		}
+	}
+	b, _ := os.ReadFile(filepath.Join(proj, "relais", "AGENT.md"))
+	s := string(b)
+	for _, n := range []string{"grammar", "reader"} {
+		if c := strings.Count(s, "## 本地模式（模块 "+n+"）"); c != 1 {
+			t.Fatalf("模块 %s 说明段应恰好一次，实为 %d:\n%s", n, c, s)
+		}
+	}
+	if !strings.Contains(s, `RELAIS_CHANNEL="reader"`) || strings.Contains(s, "relais draft") {
+		t.Fatalf("reader 段缺失或混入联网说明:\n%s", s)
+	}
+	for _, f := range []string{"CLAUDE.md", "AGENTS.md"} {
+		b, _ := os.ReadFile(filepath.Join(proj, f))
+		if strings.Count(string(b), "<!-- relais-local -->") != 1 {
+			t.Fatalf("%s 指针块应恰好一次", f)
+		}
+	}
+}
+
+func TestCreateModuleNetworkedAgentMDReplaced(t *testing.T) {
+	// 旧版本（M8 修复前）留下的 AGENT.md：联网开头 + 已有本地段；重跑后换开头、保留本地段
+	m, _ := newMgrForTest(t)
+	proj := t.TempDir()
+	if _, err := m.CreateModule("grammar", proj); err != nil {
+		t.Fatal(err)
+	}
+	p := filepath.Join(proj, "relais", "AGENT.md")
+	b, _ := os.ReadFile(p)
+	legacy := strings.Replace(string(b), "# Relais — 本地模式 agent 说明", "# Relais — agent 使用说明\n\n用 relais draft 起草", 1)
+	os.WriteFile(p, []byte(legacy), 0o644)
+	if _, err := m.CreateModule("grammar", proj); err != nil {
+		t.Fatal(err)
+	}
+	b2, _ := os.ReadFile(p)
+	if strings.Contains(string(b2), "relais draft") || strings.Count(string(b2), "## 本地模式（模块 grammar）") != 1 {
+		t.Fatalf("旧联网开头应被替换、本地段保留:\n%s", b2)
+	}
+}
+
+func TestCreateModulePermissionDenied(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root 不受目录权限限制")
+	}
+	m, _ := newMgrForTest(t)
+	parent := t.TempDir()
+	dir := filepath.Join(parent, "proj")
+	os.MkdirAll(dir, 0o755)
+	if err := os.Chmod(parent, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(parent, 0o755) })
+	_, err := m.CreateModule("grammar", dir)
+	if err == nil || !strings.Contains(err.Error(), "macOS 未授权 relais 访问该文件夹") {
+		t.Fatalf("无权限应给出授权提示，实为: %v", err)
 	}
 }

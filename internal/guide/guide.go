@@ -51,8 +51,9 @@ func LocalText(side, channel, sideDir string) string {
    RELAIS_CONFIG_DIR="%[3]s" RELAIS_CHANNEL="%[2]s" relais send <文件路径>
    发出后告诉雇主"已发出，去网页看进度"。不要等回信，回信由讨论脑处理。
 
-2. 雇主说「开工」「按结论做」时：读 relais/conclusions/ 目录下文件名以 %[2]s- 开头的最新一份（按文件名排序取最后一个），按它的正文实施。
+2. 雇主说「开工」「按结论做」时：读结论文件 relais/conclusions/%[2]s-<26 位 id>.md（有多份时按文件名排序取最后一个），按它的正文实施。
    实施完成后把做了什么、怎么验证写成一封信（summary: 已完成：…），用上面同样的命令发出。
+   这封「已完成」信会让另一侧讨论脑复核一轮，这是有意的设计，不用拦。
 
 规矩：relais/RULES.md 是本项目铁律，先读；不要读 relais/inbox/ 里其他模块的信；不要自己跑 relais auto-turn 等 hook 命令。
 `, side, channel, sideDir)

@@ -515,7 +515,8 @@ func TestAnchorM8LocalConsole(t *testing.T) {
 			t.Fatalf("锚点M8-3 项目应有 %s", f)
 		}
 	}
-	// 人在网页开题（@codex 先回）→ codex 侧 bridge（重读登记表后）拉到；claude 侧被拒接话
+	// 人在网页开题（@codex 先回）→ codex 侧 bridge（重读登记表后）拉到。claude 侧被拒接话（由 codex 侧接话）
+	// 不在这里断言，由 internal/cli/localturn_test.go 覆盖
 	body, _ = json.Marshal(map[string]any{"to": []string{"claude", "codex"}, "summary": "议题", "body_md": "@codex 先回\n\n用什么缓存"})
 	req, _ = http.NewRequest("POST", ts.URL+"/api/channels/grammar/messages", bytes.NewReader(body))
 	req.AddCookie(&http.Cookie{Name: "relais_session", Value: cookie})

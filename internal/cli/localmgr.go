@@ -1,7 +1,9 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -186,7 +188,8 @@ func (m *localManager) ScanRepos() ([]api.LocalRepo, error) {
 	}
 	var out []api.LocalRepo
 	// macOS 受 TCC 保护或与代码无关的家目录顶层：不进，免得 launchd 下的 serve 触发隐私弹窗/静默拒绝
-	skipTop := map[string]bool{"Library": true, "Applications": true, "Movies": true, "Music": true, "Pictures": true, "Public": true}
+	skipTop := map[string]bool{"Library": true, "Applications": true, "Movies": true, "Music": true, "Pictures": true, "Public": true,
+		"Desktop": true, "Documents": true, "Downloads": true} // 桌面/文稿/下载受 TCC 保护：扫描不进，手填路径仍可用
 	var walk func(dir string, depth int)
 	walk = func(dir string, depth int) {
 		entries, err := os.ReadDir(dir)
@@ -229,6 +232,9 @@ func (m *localManager) CreateModule(name, dir string) (api.LocalModule, error) {
 		return out, invalid("目录必须是绝对路径且不含 ..")
 	}
 	if st, err := os.Stat(dir); err != nil || !st.IsDir() {
+		if err != nil && errors.Is(err, fs.ErrPermission) {
+			return out, invalid("macOS 未授权 relais 访问该文件夹：系统设置 → 隐私与安全性 → 文件与文件夹（或完全磁盘访问）里允许 relais，然后重试")
+		}
 		return out, invalid("目录 %q 不存在", dir)
 	}
 	if existing, err := m.moduleDir(name); err == nil && existing != dir {
@@ -277,10 +283,12 @@ func (m *localManager) CreateModule(name, dir string) (api.LocalModule, error) {
 			return out, err
 		}
 	}
+	freshAgent := false // initProject 刚写了联网版 AGENT.md，本地模式要换掉它的开头
 	if _, err := os.Stat(filepath.Join(dir, "relais", "config.toml")); os.IsNotExist(err) {
 		if _, err := initProject(dir, cfg.BaseURL, name, "claude"); err != nil {
 			return out, err
 		}
+		freshAgent = true
 	}
 	if err := os.MkdirAll(filepath.Join(dir, "relais", "conclusions"), 0o755); err != nil {
 		return out, err
@@ -291,23 +299,73 @@ func (m *localManager) CreateModule(name, dir string) (api.LocalModule, error) {
 			return out, err
 		}
 	}
-	if err := writeLocalAgentGuide(dir, m.ld, name); err != nil {
+	if err := writeLocalAgentGuide(dir, m.ld, name, freshAgent); err != nil {
 		return out, err
+	}
+	for _, f := range []string{"CLAUDE.md", "AGENTS.md"} {
+		if err := ensureLocalPointer(filepath.Join(dir, f)); err != nil {
+			return out, err
+		}
 	}
 	return m.moduleInfo(st, name, dir)
 }
 
+const (
+	networkedAgentHeader = "# Relais — agent 使用说明"
+	localAgentPreamble   = "# Relais — 本地模式 agent 说明\n\n本项目由 Relais 本地模式管理；下面按模块与侧列出工作脑该做的事。\n"
+	localPointerMarker   = "<!-- relais-local -->"
+	localPointerBlock    = "\n" + localPointerMarker + "\n## Relais 本地模式\n本项目接入了 Relais 本地模式。读 relais/AGENT.md 的「本地模式」各节：雇主说「把这个拿去讨论」或「开工」时，按那里的说明执行，不要反问。\n<!-- /relais-local -->\n"
+)
+
 // writeLocalAgentGuide：把本地模式的工作脑说明（两侧各一段，guide.LocalText）追加到 <dir>/relais/AGENT.md。
 // 标记按模块区分，同一目录的第二个模块会得到自己的说明段；同一模块重复创建不重复追加。
-func writeLocalAgentGuide(dir, ld, name string) error {
+// 本地模块不要联网版说明（relais draft/先给雇主过目会与本地流程矛盾）：initProject 刚写的，或文件仍以联网标题开头时，
+// 换成本地开头，只保留已有的「## 本地模式（模块 …）」各段。读失败（非不存在）直接报错，绝不覆盖。
+func writeLocalAgentGuide(dir, ld, name string, fresh bool) error {
 	p := filepath.Join(dir, "relais", "AGENT.md")
-	data, _ := os.ReadFile(p)
+	raw, err := os.ReadFile(p)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	s := string(raw)
+	if fresh || strings.HasPrefix(s, networkedAgentHeader) {
+		kept := ""
+		if i := strings.Index(s, "\n## 本地模式（模块 "); i >= 0 {
+			kept = s[i:]
+		}
+		s = localAgentPreamble + kept
+	} else if s == "" {
+		s = localAgentPreamble
+	}
 	marker := fmt.Sprintf("## 本地模式（模块 %s）", name)
-	if strings.Contains(string(data), marker) {
+	if !strings.Contains(s, marker) {
+		s += "\n" + marker + "\n" + guide.LocalText("claude", name, filepath.Join(ld, "sides", "claude")) + guide.LocalText("codex", name, filepath.Join(ld, "sides", "codex"))
+	}
+	if s == string(raw) {
 		return nil
 	}
-	add := "\n" + marker + "\n" + guide.LocalText("claude", name, filepath.Join(ld, "sides", "claude")) + guide.LocalText("codex", name, filepath.Join(ld, "sides", "codex"))
-	return os.WriteFile(p, append(data, []byte(add)...), 0o644)
+	return os.WriteFile(p, []byte(s), 0o644)
+}
+
+// ensureLocalPointer：Claude Code 读 CLAUDE.md、Codex 读 AGENTS.md，都不会自己去读 relais/AGENT.md；
+// 在两者末尾追加一个带标记的指针块（文件不存在就新建；已有标记则不动；只追加，不改其它内容）。
+func ensureLocalPointer(p string) error {
+	raw, err := os.ReadFile(p)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	if strings.Contains(string(raw), localPointerMarker) {
+		return nil
+	}
+	f, err := os.OpenFile(p, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o644)
+	if err != nil {
+		return err
+	}
+	if _, err := f.WriteString(localPointerBlock); err != nil {
+		f.Close()
+		return err
+	}
+	return f.Close()
 }
 
 func (m *localManager) moduleInfo(st *store.Store, name, dir string) (api.LocalModule, error) {

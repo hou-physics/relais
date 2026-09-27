@@ -146,14 +146,18 @@ func TestLocalInitRejectsNonLoopbackExistingConfig(t *testing.T) {
 	}
 }
 
-func TestShouldInstallPlist(t *testing.T) {
+func TestPlistNeedsInstall(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "com.relais.local.serve.plist")
-	if !shouldInstallPlist(p) {
+	exe := "/opt/homebrew/bin/relais"
+	if !plistNeedsInstall(p, exe) {
 		t.Fatal("plist 不存在时应安装")
 	}
-	os.WriteFile(p, []byte("<plist/>"), 0o644)
-	if shouldInstallPlist(p) {
-		t.Fatal("plist 已存在时应跳过（spec §3.1 已在跑则跳过）")
+	os.WriteFile(p, []byte("<plist><dict><key>ProgramArguments</key><array><string>"+exe+"</string><string>serve</string></array></dict></plist>"), 0o644)
+	if plistNeedsInstall(p, exe) {
+		t.Fatal("plist 已指向当前二进制时应跳过")
+	}
+	if !plistNeedsInstall(p, "/usr/local/bin/relais") {
+		t.Fatal("plist 指向别的二进制（升级换了安装位置）时应重装")
 	}
 }
 
@@ -240,5 +244,17 @@ func TestPrintBootstrapJSONOneLine(t *testing.T) {
 	var m map[string]any
 	if err := json.Unmarshal([]byte(out), &m); err != nil || len(m) != 4 || m["password_shown"] != true || m["base_url"] != "http://127.0.0.1:8080" {
 		t.Fatalf("JSON 键不对: %q %v", out, err)
+	}
+}
+
+// spec §11：server.toml 带 local_dir 却监听非回环地址时，serve 必须拒绝启动（不能把本地管理接口挂到公网）。
+func TestRunServeRefusesLocalDirOnNonLoopback(t *testing.T) {
+	d := t.TempDir()
+	sc := "listen = \"0.0.0.0:0\"\ndata_dir = " + strconv.Quote(filepath.Join(d, "data")) + "\nbase_url = \"http://x\"\nlocal_dir = " + strconv.Quote(d) + "\n"
+	p := filepath.Join(d, "server.toml")
+	os.WriteFile(p, []byte(sc), 0o600)
+	err := RunServe([]string{"--config", p})
+	if err == nil || !strings.Contains(err.Error(), "不是回环地址") {
+		t.Fatalf("应拒绝启动: %v", err)
 	}
 }

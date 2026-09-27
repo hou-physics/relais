@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 
@@ -17,6 +18,8 @@ type Client struct {
 	Server string
 	Token  string
 	hc     *http.Client
+	// heartbeatOff：服务器没有心跳路由（404/405，联网服务器）后置真，此后不再发心跳
+	heartbeatOff bool
 }
 
 func newClient() (*Client, *GlobalConfig, error) {
@@ -164,9 +167,26 @@ func (c *Client) GuidancePull(channel string) (string, error) {
 	return g.Note, err
 }
 
-// Heartbeat：bridge 报活（本地控制台用）。联网服务器没有该路由（404）或网络错误都静默——心跳只是显示用。
+// Heartbeat：bridge 报活（本地控制台用）。只有本地侧（显式 RELAIS_CONFIG_DIR）才发；
+// 服务器回 404/405（联网服务器没有该路由）后本客户端永久停发。网络错误等一律静默——心跳只是显示用，总返回 nil。
 func (c *Client) Heartbeat() error {
-	_ = c.do("POST", "/api/local/heartbeat", nil, nil)
+	if c.heartbeatOff || os.Getenv("RELAIS_CONFIG_DIR") == "" {
+		return nil
+	}
+	req, err := http.NewRequest("POST", c.Server+"/api/local/heartbeat", nil)
+	if err != nil {
+		return nil
+	}
+	req.Header.Set("Authorization", "Bearer "+c.Token)
+	resp, err := c.hc.Do(req)
+	if err != nil {
+		return nil
+	}
+	io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusMethodNotAllowed {
+		c.heartbeatOff = true
+	}
 	return nil
 }
 
