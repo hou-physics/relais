@@ -152,6 +152,20 @@ func Open(path string) (*Store, error) {
 		`ALTER TABLE channel_auto ADD COLUMN mode TEXT NOT NULL DEFAULT 'supervised'`,
 		`ALTER TABLE channel_auto ADD COLUMN kicked_off INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE channel_auto ADD COLUMN closed INTEGER NOT NULL DEFAULT 0`,
+		`CREATE TABLE IF NOT EXISTS local_modules (
+			channel_id INTEGER PRIMARY KEY REFERENCES channels(id),
+			dir TEXT NOT NULL,
+			archived_seq INTEGER NOT NULL DEFAULT 0,
+			codex_thread_id TEXT NOT NULL DEFAULT '',
+			codex_thread_name TEXT NOT NULL DEFAULT '',
+			codex_attached_at TEXT NOT NULL DEFAULT '',
+			codex_delivery_error TEXT NOT NULL DEFAULT '',
+			created_at TEXT NOT NULL,
+			closed_at TEXT NOT NULL DEFAULT '')`,
+		`CREATE TABLE IF NOT EXISTS local_deliveries (
+			message_id TEXT NOT NULL, side TEXT NOT NULL, status TEXT NOT NULL,
+			error TEXT NOT NULL DEFAULT '', at TEXT NOT NULL,
+			PRIMARY KEY (message_id, side))`,
 	} {
 		if _, err := db.Exec(ddl); err != nil && !strings.Contains(err.Error(), "duplicate column") {
 			return nil, err
