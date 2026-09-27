@@ -108,14 +108,14 @@ func TestScanRepos(t *testing.T) {
 func TestCreateListCloseModule(t *testing.T) {
 	m, ld := newMgrForTest(t)
 	proj := t.TempDir()
-	mod, err := m.CreateModule("grammar", proj)
+	mod, err := m.CreateModule(api.LocalModuleRequest{Name: "grammar", Dir: proj})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if mod.Name != "grammar" || mod.Dir != proj || mod.Mode != "supervised" || mod.RoundCap != 8 || mod.State != "running" {
 		t.Fatalf("模块信息错: %+v", mod)
 	}
-	if _, err := m.CreateModule("grammar", proj); err != nil {
+	if _, err := m.CreateModule(api.LocalModuleRequest{Name: "grammar", Dir: proj}); err != nil {
 		t.Fatalf("重复创建应幂等: %v", err)
 	}
 	for _, side := range []string{"claude", "codex"} {
@@ -130,7 +130,7 @@ func TestCreateListCloseModule(t *testing.T) {
 		}
 	}
 	// 第二个模块共用目录：config.toml 不覆盖
-	if _, err := m.CreateModule("reader", proj); err != nil {
+	if _, err := m.CreateModule(api.LocalModuleRequest{Name: "reader", Dir: proj}); err != nil {
 		t.Fatal(err)
 	}
 	var pc ProjectConfig
@@ -141,11 +141,11 @@ func TestCreateListCloseModule(t *testing.T) {
 	// 目录名含 ".." 字样但不是上级目录段：合法
 	dotted := filepath.Join(t.TempDir(), "foo..bar")
 	os.MkdirAll(dotted, 0o755)
-	if _, err := m.CreateModule("dotted", dotted); err != nil {
+	if _, err := m.CreateModule(api.LocalModuleRequest{Name: "dotted", Dir: dotted}); err != nil {
 		t.Fatalf("foo..bar 应被接受: %v", err)
 	}
 	// 已绑定的模块不能改绑到别的目录
-	if _, err := m.CreateModule("grammar", t.TempDir()); !errors.Is(err, server.ErrLocalInvalid) || !strings.Contains(err.Error(), "不能改绑") {
+	if _, err := m.CreateModule(api.LocalModuleRequest{Name: "grammar", Dir: t.TempDir()}); !errors.Is(err, server.ErrLocalInvalid) || !strings.Contains(err.Error(), "不能改绑") {
 		t.Fatalf("改绑目录应 ErrLocalInvalid: %v", err)
 	}
 	if err := m.CloseModule("dotted"); err != nil {
@@ -153,7 +153,7 @@ func TestCreateListCloseModule(t *testing.T) {
 	}
 	// 非法输入
 	for _, bad := range []struct{ name, dir string }{{"bad name", proj}, {"x", "/nonexistent/dir"}, {"x", proj + "/../" + filepath.Base(proj)}, {"x", "relative"}} {
-		_, err := m.CreateModule(bad.name, bad.dir)
+		_, err := m.CreateModule(api.LocalModuleRequest{Name: bad.name, Dir: bad.dir})
 		if !errors.Is(err, server.ErrLocalInvalid) {
 			t.Fatalf("%+v 应为 ErrLocalInvalid: %v", bad, err)
 		}
@@ -163,15 +163,8 @@ func TestCreateListCloseModule(t *testing.T) {
 	if err != nil || len(mods) != 3 {
 		t.Fatalf("应列出 3 个模块（含已关闭的 dotted）: %v %v", mods, err)
 	}
-	// 结论计数
-	os.WriteFile(filepath.Join(proj, "relais", "conclusions", "grammar-01AAAAAAAAAAAAAAAAAAAAAAAA.md"), []byte("x"), 0o644)
-	os.WriteFile(filepath.Join(proj, "relais", "conclusions", "reader-01BBBBBBBBBBBBBBBBBBBBBBBB.md"), []byte("x"), 0o644)
-	mods, _ = m.ListModules()
-	for _, md := range mods {
-		if md.Name != "dotted" && md.Conclusions != 1 {
-			t.Fatalf("%s 结论数应为 1: %+v", md.Name, md)
-		}
-	}
+	// 结论计数（api.LocalModule.Conclusions 字段在 M9 已删除，改由 outbox/守卫循环那一套状态
+	// 取代——Task 9 重写；这里不再断言旧字段，只留 close 相关部分）。
 	// close
 	sessionSet(filepath.Join(ld, "sides", "claude"), "grammar", "sid")
 	if err := m.CloseModule("grammar"); err != nil {
@@ -191,41 +184,31 @@ func TestCreateListCloseModule(t *testing.T) {
 	}
 }
 
-func TestRulesAndSettings(t *testing.T) {
+// TestSettings：M9 的 api.LocalSettings 删了 ClaudePath、Rules/PutRules 方法整个没了
+// （见 server.LocalManager 新接口）；本测试只留 Settings/PutSettings 部分，字段换成 CodexPath。
+// 原 TestRulesAndSettings 的 Rules/PutRules/ClaudePath 断言按 Task 8 brief 的指示删除，
+// Task 9 会重写 cli 包时再补真实覆盖。
+func TestSettings(t *testing.T) {
 	m, ld := newMgrForTest(t)
 	proj := t.TempDir()
-	m.CreateModule("grammar", proj)
-	text, err := m.Rules("grammar")
-	if err != nil || !strings.Contains(text, "铁律") {
-		t.Fatalf("应读到模板: %q %v", text, err)
-	}
-	if err := m.PutRules("grammar", "- 不碰 8000 端口\n"); err != nil {
-		t.Fatal(err)
-	}
-	data, _ := os.ReadFile(filepath.Join(proj, "relais", "RULES.md"))
-	if string(data) != "- 不碰 8000 端口\n" {
-		t.Fatalf("RULES.md 应被覆盖: %q", data)
-	}
-	if _, err := m.Rules("nope"); !errors.Is(err, server.ErrLocalInvalid) {
-		t.Fatal("不存在的模块应 ErrLocalInvalid")
-	}
+	m.CreateModule(api.LocalModuleRequest{Name: "grammar", Dir: proj})
 	s, _ := m.Settings()
-	if s.ClaudePath != "/bin/echo" || s.CodexPath != "/bin/cat" || s.DefaultMode != "supervised" {
+	if s.CodexPath != "/bin/cat" || s.DefaultMode != "supervised" {
 		t.Fatalf("settings 错: %+v", s)
 	}
-	before, _ := os.ReadFile(filepath.Join(ld, "sides", "claude", "hooks", "auto-reply.sh"))
-	if err := m.PutSettings(api.LocalSettings{ClaudePath: "/bin/ls", CodexPath: "/bin/cat", DefaultMode: "autopilot"}); err != nil {
+	before, _ := os.ReadFile(filepath.Join(ld, "sides", "codex", "hooks", "auto-reply.sh"))
+	if err := m.PutSettings(api.LocalSettings{CodexPath: "/bin/ls", DefaultMode: "autopilot", DefaultCap: 6}); err != nil {
 		t.Fatal(err)
 	}
-	after, _ := os.ReadFile(filepath.Join(ld, "sides", "claude", "hooks", "auto-reply.sh"))
+	after, _ := os.ReadFile(filepath.Join(ld, "sides", "codex", "hooks", "auto-reply.sh"))
 	if string(before) == string(after) || !strings.Contains(string(after), "/bin/ls") {
 		t.Fatal("改路径后应重写 hook")
 	}
 	s, _ = m.Settings()
-	if s.ClaudePath != "/bin/ls" || s.DefaultMode != "autopilot" {
+	if s.CodexPath != "/bin/ls" || s.DefaultMode != "autopilot" || s.DefaultCap != 6 {
 		t.Fatalf("settings 未更新: %+v", s)
 	}
-	for _, bad := range []api.LocalSettings{{ClaudePath: "/nonexistent", CodexPath: "/bin/cat", DefaultMode: "supervised"}, {ClaudePath: "/bin/ls", CodexPath: "/bin/cat", DefaultMode: "yolo"}, {ClaudePath: t.TempDir(), CodexPath: "/bin/cat", DefaultMode: "supervised"}} {
+	for _, bad := range []api.LocalSettings{{CodexPath: "/nonexistent", DefaultMode: "supervised"}, {CodexPath: "/bin/ls", DefaultMode: "yolo"}, {CodexPath: t.TempDir(), DefaultMode: "supervised"}} {
 		if err := m.PutSettings(bad); !errors.Is(err, server.ErrLocalInvalid) {
 			t.Fatalf("%+v 应 ErrLocalInvalid: %v", bad, err)
 		}
@@ -242,7 +225,7 @@ func decodeTOMLFile(t *testing.T, path string, v any) {
 func TestCreateModuleWritesLocalGuideForBothSides(t *testing.T) {
 	m, ld := newMgrForTest(t)
 	proj := t.TempDir()
-	if _, err := m.CreateModule("grammar", proj); err != nil {
+	if _, err := m.CreateModule(api.LocalModuleRequest{Name: "grammar", Dir: proj}); err != nil {
 		t.Fatal(err)
 	}
 	data, _ := os.ReadFile(filepath.Join(proj, "relais", "AGENT.md"))
@@ -252,7 +235,7 @@ func TestCreateModuleWritesLocalGuideForBothSides(t *testing.T) {
 			t.Fatalf("AGENT.md 缺 %q", want)
 		}
 	}
-	m.CreateModule("grammar", proj)
+	m.CreateModule(api.LocalModuleRequest{Name: "grammar", Dir: proj})
 	data2, _ := os.ReadFile(filepath.Join(proj, "relais", "AGENT.md"))
 	if strings.Count(string(data2), "## 本地模式（模块 grammar）") != 1 {
 		t.Fatal("重复创建不应重复追加说明")
@@ -280,7 +263,7 @@ func TestCreateModuleKeepsExistingClaudeMD(t *testing.T) {
 	orig := "# 我的项目\n\n已有规矩：别动 main。\n"
 	os.WriteFile(filepath.Join(proj, "CLAUDE.md"), []byte(orig), 0o644)
 	for i := 0; i < 2; i++ {
-		if _, err := m.CreateModule("grammar", proj); err != nil {
+		if _, err := m.CreateModule(api.LocalModuleRequest{Name: "grammar", Dir: proj}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -294,7 +277,7 @@ func TestCreateModuleTwoModulesSameDirGuide(t *testing.T) {
 	m, _ := newMgrForTest(t)
 	proj := t.TempDir()
 	for _, n := range []string{"grammar", "reader", "grammar", "reader"} {
-		if _, err := m.CreateModule(n, proj); err != nil {
+		if _, err := m.CreateModule(api.LocalModuleRequest{Name: n, Dir: proj}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -320,14 +303,14 @@ func TestCreateModuleNetworkedAgentMDReplaced(t *testing.T) {
 	// 旧版本（M8 修复前）留下的 AGENT.md：联网开头 + 已有本地段；重跑后换开头、保留本地段
 	m, _ := newMgrForTest(t)
 	proj := t.TempDir()
-	if _, err := m.CreateModule("grammar", proj); err != nil {
+	if _, err := m.CreateModule(api.LocalModuleRequest{Name: "grammar", Dir: proj}); err != nil {
 		t.Fatal(err)
 	}
 	p := filepath.Join(proj, "relais", "AGENT.md")
 	b, _ := os.ReadFile(p)
 	legacy := strings.Replace(string(b), "# Relais — 本地模式 agent 说明", "# Relais — agent 使用说明\n\n用 relais draft 起草", 1)
 	os.WriteFile(p, []byte(legacy), 0o644)
-	if _, err := m.CreateModule("grammar", proj); err != nil {
+	if _, err := m.CreateModule(api.LocalModuleRequest{Name: "grammar", Dir: proj}); err != nil {
 		t.Fatal(err)
 	}
 	b2, _ := os.ReadFile(p)
@@ -348,7 +331,7 @@ func TestCreateModulePermissionDenied(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { os.Chmod(parent, 0o755) })
-	_, err := m.CreateModule("grammar", dir)
+	_, err := m.CreateModule(api.LocalModuleRequest{Name: "grammar", Dir: dir})
 	if err == nil || !strings.Contains(err.Error(), "macOS 未授权 relais 访问该文件夹") {
 		t.Fatalf("无权限应给出授权提示，实为: %v", err)
 	}

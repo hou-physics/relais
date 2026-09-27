@@ -18,12 +18,12 @@ import (
 var webFS embed.FS
 
 type Server struct {
-	st      *store.Store
-	baseURL string
-	dataDir string
-	hub     *hub
-	local   LocalManager // 本地控制台管理器；nil 时 /api/local/* 不注册（M8）
-	beats   heartbeats   // 桥接进程心跳表（M8）
+	st             *store.Store
+	baseURL        string
+	dataDir        string
+	hub            *hub
+	local          LocalManager // 本地控制台管理器；nil 时 /api/local/* 不注册（M8）
+	localHumanUser string       // 本地模式回环免钥匙落到的用户名（M9，随 SetLocal 注入）
 }
 
 func New(st *store.Store, baseURL, dataDir string) *Server {
@@ -103,6 +103,27 @@ func (s *Server) Handler() http.Handler {
 
 	if s.local != nil {
 		s.registerLocalRoutes(mux)
+
+		localFS, err := fs.Sub(webFS, "web/local")
+		if err != nil {
+			panic(err)
+		}
+		mux.Handle("GET /local/", s.cacheStatic(http.StripPrefix("/local/", http.FileServerFS(localFS))))
+		serveLocalIndex := s.cacheStatic(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			data, err := webFS.ReadFile("web/local/index.html")
+			if err != nil {
+				http.NotFound(w, r)
+				return
+			}
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.Write(data)
+		}))
+		mux.Handle("GET /{$}", serveLocalIndex)
+		mux.Handle("GET /index.html", serveLocalIndex)
+	} else {
+		// 线上没有本地管理器：/local/* 必须 404，不能被下面的 "GET /" 静态兜底命中
+		// （embed 里确实含 web/local/* 占位文件，得在这挡住）。
+		mux.Handle("GET /local/", http.NotFoundHandler())
 	}
 
 	mux.Handle("GET /", s.cacheStatic(staticFiles))

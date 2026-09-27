@@ -3,35 +3,48 @@ package server
 import (
 	"encoding/json"
 	"errors"
+	"io"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hou-physics/relais/internal/api"
 	"github.com/hou-physics/relais/internal/store"
 )
 
-// fakeLocal：记录调用的假管理器
 type fakeLocal struct {
-	modules []api.LocalModule
-	rules   map[string]string
-	created []api.LocalModuleRequest
-	closed  []string
-	set     api.LocalSettings
+	modules   []api.LocalModule
+	created   []api.LocalModuleRequest
+	patched   []api.LocalModulePatch
+	closed    []string
+	reopened  []string
+	deleted   map[string]bool
+	attached  []api.LocalAttachRequest
+	redeliver []string
+	set       api.LocalSettings
 }
 
 func (f *fakeLocal) ScanRepos() ([]api.LocalRepo, error) {
 	return []api.LocalRepo{{Dir: "/Users/x/proj", Name: "proj"}}, nil
 }
 func (f *fakeLocal) ListModules() ([]api.LocalModule, error) { return f.modules, nil }
-func (f *fakeLocal) CreateModule(name, dir string) (api.LocalModule, error) {
-	if name == "bad name" {
-		return api.LocalModule{}, errors.Join(ErrLocalInvalid, errors.New("模块名含空格"))
+func (f *fakeLocal) CreateModule(req api.LocalModuleRequest) (api.LocalModule, error) {
+	if strings.Contains(req.Name, "/") {
+		return api.LocalModule{}, errors.Join(ErrLocalInvalid, errors.New("模块名含斜杠"))
 	}
-	f.created = append(f.created, api.LocalModuleRequest{Name: name, Dir: dir})
-	m := api.LocalModule{Name: name, Dir: dir, Mode: "supervised", RoundCap: 8, State: "running"}
+	f.created = append(f.created, req)
+	m := api.LocalModule{Name: req.Name, Dir: req.Dir, Mode: "supervised", RoundCap: 8, State: "未接入"}
 	f.modules = append(f.modules, m)
 	return m, nil
+}
+func (f *fakeLocal) PatchModule(name string, p api.LocalModulePatch) (api.LocalModule, error) {
+	if p.Name == "taken" {
+		return api.LocalModule{}, errors.Join(ErrLocalInvalid, errors.New("名字已存在"))
+	}
+	f.patched = append(f.patched, p)
+	return api.LocalModule{Name: name}, nil
 }
 func (f *fakeLocal) CloseModule(name string) error {
 	if name == "nope" {
@@ -40,13 +53,28 @@ func (f *fakeLocal) CloseModule(name string) error {
 	f.closed = append(f.closed, name)
 	return nil
 }
-func (f *fakeLocal) Rules(name string) (string, error) {
-	if _, ok := f.rules[name]; !ok {
-		return "", errors.Join(ErrLocalInvalid, errors.New("不存在"))
-	}
-	return f.rules[name], nil
+func (f *fakeLocal) ReopenModule(name string) error {
+	f.reopened = append(f.reopened, name)
+	return nil
 }
-func (f *fakeLocal) PutRules(name, text string) error     { f.rules[name] = text; return nil }
+func (f *fakeLocal) DeleteModule(name string, files bool) error {
+	if f.deleted == nil {
+		f.deleted = map[string]bool{}
+	}
+	f.deleted[name] = files
+	return nil
+}
+func (f *fakeLocal) Conversations(side, dir string) ([]api.LocalConversation, error) {
+	return []api.LocalConversation{{ID: side + "-1", Name: "对话", Cwd: dir, UpdatedAt: time.Now()}}, nil
+}
+func (f *fakeLocal) AttachModule(name string, req api.LocalAttachRequest) (api.LocalModule, error) {
+	if req.Side != "codex" {
+		return api.LocalModule{}, errors.Join(ErrLocalInvalid, errors.New("只有 codex 侧需要登记"))
+	}
+	f.attached = append(f.attached, req)
+	return api.LocalModule{Name: name, Codex: api.LocalSide{Attached: true, ThreadName: "对话"}}, nil
+}
+func (f *fakeLocal) Redeliver(name string) error          { f.redeliver = append(f.redeliver, name); return nil }
 func (f *fakeLocal) Settings() (api.LocalSettings, error) { return f.set, nil }
 func (f *fakeLocal) PutSettings(s api.LocalSettings) error {
 	if s.DefaultMode == "yolo" {
@@ -55,116 +83,141 @@ func (f *fakeLocal) PutSettings(s api.LocalSettings) error {
 	f.set = s
 	return nil
 }
+func (f *fakeLocal) State() api.LocalState { return api.LocalState{Version: "test", CodexOK: true} }
 
 func newLocalTestServer(t *testing.T) (*httptest.Server, *Server, *fakeLocal, map[string]*store.User) {
 	t.Helper()
 	ts, st, users := newTestServer(t)
 	ts.Close()
-	f := &fakeLocal{rules: map[string]string{}, set: api.LocalSettings{ClaudePath: "/c", CodexPath: "/x", DefaultMode: "supervised"}}
+	f := &fakeLocal{set: api.LocalSettings{CodexPath: "/x", DefaultMode: "supervised", DefaultCap: 8}}
 	srv := New(st, "http://relais.test", t.TempDir())
-	srv.SetLocal(f)
+	srv.SetLocal(f, "hou")
 	ts2 := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts2.Close)
 	return ts2, srv, f, users
 }
 
-func TestLocalRoutesAbsentWithoutManager(t *testing.T) {
-	ts, _, users := newTestServer(t)
-	cookie := loginCookie(t, ts, "hou", "pw-hou")
-	if r := humanDo(t, ts, cookie, "GET", "/api/local/modules", nil); r.StatusCode != 404 {
-		t.Fatalf("未注入管理器时应 404（线上不暴露）, got %d", r.StatusCode)
+func do(t *testing.T, ts *httptest.Server, method, path string, body any) *http.Response {
+	t.Helper()
+	var r io.Reader
+	if body != nil {
+		b, _ := json.Marshal(body)
+		r = strings.NewReader(string(b))
 	}
-	// 心跳路由未注册时落到 catch-all "GET /"：POST 撞见方法不匹配的通配路径，
-	// net/http.ServeMux（Go 1.22+）按规范回 405 而非 404（已用最小复现验证），
-	// 但同样意味着接口不可用，满足"线上不暴露"的安全目标。
-	if r := agentDo(t, ts, users["hou"].AgentToken, "POST", "/api/local/heartbeat", nil); r.StatusCode != 405 {
-		t.Fatalf("心跳未注册时应 405（方法不匹配 catch-all）, got %d", r.StatusCode)
+	req, _ := http.NewRequest(method, ts.URL+path, r)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resp
+}
+
+func TestLocalRoutesAbsentWithoutManager(t *testing.T) {
+	ts, _, _ := newTestServer(t)
+	for _, p := range []string{"/api/local/modules", "/api/local/state", "/local/app.js"} {
+		resp, _ := http.Get(ts.URL + p)
+		if resp.StatusCode == 200 {
+			t.Fatalf("线上不该有 %s: %d", p, resp.StatusCode)
+		}
+	}
+	resp, _ := http.Get(ts.URL + "/")
+	b, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(b), `id="login-view"`) {
+		t.Fatal("线上首页应仍是联网页面（含登录）")
 	}
 }
 
-func TestLocalRoutesHumanAndLoopbackOnly(t *testing.T) {
-	ts, srv, _, users := newLocalTestServer(t)
-	cookie := loginCookie(t, ts, "hou", "pw-hou")
-	// agent token → 403
-	for _, ep := range []struct{ m, p string }{{"GET", "/api/local/repos"}, {"GET", "/api/local/modules"}, {"POST", "/api/local/modules"}, {"POST", "/api/local/modules/x/close"}, {"GET", "/api/local/modules/x/rules"}, {"PUT", "/api/local/modules/x/rules"}, {"GET", "/api/local/settings"}, {"PUT", "/api/local/settings"}} {
-		if r := agentDo(t, ts, users["hou"].AgentToken, ep.m, ep.p, map[string]string{}); r.StatusCode != 403 {
-			t.Fatalf("agent %s %s 应 403, got %d", ep.m, ep.p, r.StatusCode)
-		}
+func TestLocalRoutesLoopbackOnly(t *testing.T) {
+	ts, srv, _, _ := newLocalTestServer(t)
+	if r := do(t, ts, "GET", "/api/local/modules", nil); r.StatusCode != 200 {
+		t.Fatalf("回环免钥匙应 200: %d", r.StatusCode)
 	}
-	// 人钥匙但非回环 → 403（直接调 handler 伪造 RemoteAddr）
 	req := httptest.NewRequest("GET", "/api/local/modules", nil)
-	req.AddCookie(cookie)
 	req.RemoteAddr = "10.0.0.5:4321"
 	rec := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rec, req)
-	if rec.Code != 403 {
-		t.Fatalf("非回环应 403, got %d", rec.Code)
+	if rec.Code != 401 {
+		t.Fatalf("非回环应 401: %d", rec.Code)
 	}
-	// 人钥匙 + 回环（httptest 客户端就是 127.0.0.1）→ 200
-	if r := humanDo(t, ts, cookie, "GET", "/api/local/modules", nil); r.StatusCode != 200 {
-		t.Fatalf("回环+人钥匙应 200, got %d", r.StatusCode)
+	if r := do(t, ts, "POST", "/api/local/heartbeat", nil); r.StatusCode != 404 {
+		t.Fatalf("心跳路由应已删除: %d", r.StatusCode)
 	}
-	// 心跳：人钥匙 403，agent 204
-	if r := humanDo(t, ts, cookie, "POST", "/api/local/heartbeat", nil); r.StatusCode != 403 {
-		t.Fatalf("人发心跳应 403, got %d", r.StatusCode)
-	}
-	if r := agentDo(t, ts, users["hou"].AgentToken, "POST", "/api/local/heartbeat", nil); r.StatusCode != 204 {
-		t.Fatalf("agent 心跳应 204, got %d", r.StatusCode)
+	if r := do(t, ts, "GET", "/api/local/modules/x/rules", nil); r.StatusCode != 404 {
+		t.Fatalf("规矩路由应已删除: %d", r.StatusCode)
 	}
 }
 
-func TestLocalModulesCRUDAndHeartbeat(t *testing.T) {
-	ts, _, f, users := newLocalTestServer(t)
-	cookie := loginCookie(t, ts, "hou", "pw-hou")
-	r := humanDo(t, ts, cookie, "GET", "/api/local/repos", nil)
-	var repos []api.LocalRepo
-	json.NewDecoder(r.Body).Decode(&repos)
-	if len(repos) != 1 || repos[0].Name != "proj" {
-		t.Fatalf("repos 错: %+v", repos)
+func TestLocalModuleRoutes(t *testing.T) {
+	ts, _, f, _ := newLocalTestServer(t)
+	if r := do(t, ts, "POST", "/api/local/modules", api.LocalModuleRequest{Name: "m", Dir: "/Users/x/proj", CodexThread: "t1"}); r.StatusCode != 200 {
+		t.Fatalf("create: %d", r.StatusCode)
 	}
-	r = humanDo(t, ts, cookie, "POST", "/api/local/modules", api.LocalModuleRequest{Name: "grammar", Dir: "/Users/x/proj"})
-	if r.StatusCode != 200 || len(f.created) != 1 {
-		t.Fatalf("创建应 200, got %d %v", r.StatusCode, f.created)
+	if len(f.created) != 1 || f.created[0].CodexThread != "t1" {
+		t.Fatalf("create 参数没传全: %+v", f.created)
 	}
-	r = humanDo(t, ts, cookie, "POST", "/api/local/modules", api.LocalModuleRequest{Name: "bad name", Dir: "/x"})
-	var e api.ErrorResponse
-	json.NewDecoder(r.Body).Decode(&e)
-	if r.StatusCode != 400 || !strings.Contains(e.Error, "空格") {
-		t.Fatalf("非法输入应 400 带文案, got %d %q", r.StatusCode, e.Error)
+	if r := do(t, ts, "POST", "/api/local/modules", api.LocalModuleRequest{Name: "a/b", Dir: "/x"}); r.StatusCode != 400 {
+		t.Fatalf("invalid 应 400: %d", r.StatusCode)
 	}
-	// 心跳：hou 的 agent 报活后（测试世界里没有 claude/codex 用户，用 hou 代表一侧）
-	agentDo(t, ts, users["hou"].AgentToken, "POST", "/api/local/heartbeat", nil)
-	r = humanDo(t, ts, cookie, "GET", "/api/local/modules", nil)
-	var mods []api.LocalModule
-	json.NewDecoder(r.Body).Decode(&mods)
-	if len(mods) != 1 || !mods[0].BridgeAlive["hou"] || mods[0].LastHeartbeat["hou"].IsZero() || mods[0].BridgeAlive["wu"] {
-		t.Fatalf("心跳应体现在模块列表: %+v", mods)
+	if r := do(t, ts, "PATCH", "/api/local/modules/m", api.LocalModulePatch{Name: "m2", RoundCap: 10}); r.StatusCode != 200 || f.patched[0].RoundCap != 10 {
+		t.Fatalf("patch: %d %+v", r.StatusCode, f.patched)
 	}
-	// rules
-	if r := humanDo(t, ts, cookie, "PUT", "/api/local/modules/grammar/rules", api.LocalRules{Text: "- 规矩"}); r.StatusCode != 204 {
-		t.Fatalf("PUT rules 应 204, got %d", r.StatusCode)
+	if r := do(t, ts, "PATCH", "/api/local/modules/m", api.LocalModulePatch{Name: "taken"}); r.StatusCode != 400 {
+		t.Fatalf("重名应 400: %d", r.StatusCode)
 	}
-	r = humanDo(t, ts, cookie, "GET", "/api/local/modules/grammar/rules", nil)
-	var rules api.LocalRules
-	json.NewDecoder(r.Body).Decode(&rules)
-	if rules.Text != "- 规矩" {
-		t.Fatalf("rules 回读错: %+v", rules)
+	if r := do(t, ts, "POST", "/api/local/modules/m/close", nil); r.StatusCode != 204 || f.closed[0] != "m" {
+		t.Fatalf("close: %d", r.StatusCode)
 	}
-	if r := humanDo(t, ts, cookie, "GET", "/api/local/modules/nope/rules", nil); r.StatusCode != 400 {
-		t.Fatalf("不存在的模块 rules 应 400, got %d", r.StatusCode)
+	if r := do(t, ts, "POST", "/api/local/modules/m/reopen", nil); r.StatusCode != 204 || f.reopened[0] != "m" {
+		t.Fatalf("reopen: %d", r.StatusCode)
 	}
-	// settings
-	if r := humanDo(t, ts, cookie, "PUT", "/api/local/settings", api.LocalSettings{ClaudePath: "/c2", CodexPath: "/x", DefaultMode: "autopilot"}); r.StatusCode != 204 || f.set.ClaudePath != "/c2" {
-		t.Fatalf("PUT settings 应 204 并生效, got %d %+v", r.StatusCode, f.set)
+	if r := do(t, ts, "DELETE", "/api/local/modules/m?files=1", nil); r.StatusCode != 204 || !f.deleted["m"] {
+		t.Fatalf("delete files=1: %d %v", r.StatusCode, f.deleted)
 	}
-	if r := humanDo(t, ts, cookie, "PUT", "/api/local/settings", api.LocalSettings{DefaultMode: "yolo"}); r.StatusCode != 400 {
-		t.Fatalf("无效 settings 应 400, got %d", r.StatusCode)
+	if r := do(t, ts, "DELETE", "/api/local/modules/n", nil); r.StatusCode != 204 || f.deleted["n"] {
+		t.Fatalf("delete 默认不删文件: %d %v", r.StatusCode, f.deleted)
 	}
-	// close
-	if r := humanDo(t, ts, cookie, "POST", "/api/local/modules/grammar/close", nil); r.StatusCode != 204 || len(f.closed) != 1 {
-		t.Fatalf("close 应 204, got %d", r.StatusCode)
+	r := do(t, ts, "GET", "/api/local/conversations?side=codex&dir=/Users/x/proj", nil)
+	var convs []api.LocalConversation
+	json.NewDecoder(r.Body).Decode(&convs)
+	if r.StatusCode != 200 || len(convs) != 1 || convs[0].ID != "codex-1" {
+		t.Fatalf("conversations: %d %+v", r.StatusCode, convs)
 	}
-	if r := humanDo(t, ts, cookie, "POST", "/api/local/modules/nope/close", nil); r.StatusCode != 400 {
-		t.Fatalf("close 不存在应 400, got %d", r.StatusCode)
+	if r := do(t, ts, "POST", "/api/local/modules/m/attach", api.LocalAttachRequest{Side: "codex", Thread: "t9"}); r.StatusCode != 200 || f.attached[0].Thread != "t9" {
+		t.Fatalf("attach: %d", r.StatusCode)
+	}
+	if r := do(t, ts, "POST", "/api/local/modules/m/attach", api.LocalAttachRequest{Side: "claude"}); r.StatusCode != 400 {
+		t.Fatalf("claude attach 应 400: %d", r.StatusCode)
+	}
+	if r := do(t, ts, "POST", "/api/local/modules/m/redeliver", nil); r.StatusCode != 204 || f.redeliver[0] != "m" {
+		t.Fatalf("redeliver: %d", r.StatusCode)
+	}
+	if r := do(t, ts, "PUT", "/api/local/settings", api.LocalSettings{CodexPath: "/c", DefaultMode: "autopilot", DefaultCap: 6, NotifyEveryLetter: true}); r.StatusCode != 204 || f.set.DefaultCap != 6 || !f.set.NotifyEveryLetter {
+		t.Fatalf("settings: %d %+v", r.StatusCode, f.set)
+	}
+	if r := do(t, ts, "PUT", "/api/local/settings", api.LocalSettings{DefaultMode: "yolo"}); r.StatusCode != 400 {
+		t.Fatalf("坏设置应 400: %d", r.StatusCode)
+	}
+	r = do(t, ts, "GET", "/api/local/state", nil)
+	var stt api.LocalState
+	json.NewDecoder(r.Body).Decode(&stt)
+	if r.StatusCode != 200 || stt.Version != "test" || !stt.CodexOK {
+		t.Fatalf("state: %d %+v", r.StatusCode, stt)
+	}
+}
+
+func TestLocalPagesServedAtRoot(t *testing.T) {
+	ts, _, _, _ := newLocalTestServer(t)
+	resp, _ := http.Get(ts.URL + "/")
+	b, _ := io.ReadAll(resp.Body)
+	s := string(b)
+	if resp.StatusCode != 200 || !strings.Contains(s, "/local/app.js") || strings.Contains(s, `id="login-view"`) {
+		t.Fatalf("本地首页应是控制台、无登录: %d", resp.StatusCode)
+	}
+	for _, p := range []string{"/local/app.js", "/local/style.css", "/vendor/marked.min.js"} {
+		resp, _ := http.Get(ts.URL + p)
+		if resp.StatusCode != 200 {
+			t.Fatalf("%s: %d", p, resp.StatusCode)
+		}
 	}
 }

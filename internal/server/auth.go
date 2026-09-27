@@ -33,6 +33,12 @@ func (s *Server) auth(h func(http.ResponseWriter, *http.Request, principal)) htt
 				return
 			}
 		}
+		if s.local != nil && s.localHumanUser != "" && isLoopback(r.RemoteAddr) {
+			if u, err := s.st.UserByName(s.localHumanUser); err == nil {
+				h(w, r, principal{user: u, agent: false})
+				return
+			}
+		}
 		writeErr(w, http.StatusUnauthorized, "未登录")
 	}
 }

@@ -178,30 +178,82 @@ type LocalRepo struct {
 	ModifiedAt time.Time `json:"modified_at"`
 }
 
+// LocalSide：模块里某一侧（claude/codex）的接入与投递状态（M9）。
+type LocalSide struct {
+	Waiting       bool      `json:"waiting"` // claude
+	WaitSince     time.Time `json:"wait_since,omitempty"`
+	SessionName   string    `json:"session_name,omitempty"`
+	Attached      bool      `json:"attached"` // codex
+	ThreadName    string    `json:"thread_name,omitempty"`
+	AttachedAt    time.Time `json:"attached_at,omitempty"`
+	LastDelivery  string    `json:"last_delivery,omitempty"` // ok|error|""
+	DeliveryError string    `json:"delivery_error,omitempty"`
+	DeliveryAt    time.Time `json:"delivery_at,omitempty"`
+}
+
 type LocalModule struct {
-	Name          string               `json:"name"`
-	Dir           string               `json:"dir"`
-	Mode          string               `json:"mode"`
-	Round         int                  `json:"round"`
-	RoundCap      int                  `json:"round_cap"`
-	State         string               `json:"state"` // running|paused|needs_human|resolved|kicked_off|closed
-	NeedsHumanQ   string               `json:"needs_human_q,omitempty"`
-	Conclusions   int                  `json:"conclusions"`
-	BridgeAlive   map[string]bool      `json:"bridge_alive"`   // 由服务器填
-	LastHeartbeat map[string]time.Time `json:"last_heartbeat"` // 由服务器填
+	Name              string           `json:"name"`
+	Dir               string           `json:"dir"`
+	Mode              string           `json:"mode"`
+	Round             int              `json:"round"`
+	RoundCap          int              `json:"round_cap"`
+	State             string           `json:"state"` // 未接入|讨论中|等你|已握手|已开工|已关闭
+	LastSeq           int              `json:"last_seq"`
+	LastFrom          string           `json:"last_from,omitempty"`
+	LastAt            time.Time        `json:"last_at,omitempty"`
+	WaitingFor        string           `json:"waiting_for,omitempty"` // claude|codex|user|""
+	Claude            LocalSide        `json:"claude"`
+	Codex             LocalSide        `json:"codex"`
+	NeedsHumanQ       string           `json:"needs_human_q,omitempty"`
+	PendingConclusion *LocalConclusion `json:"pending_conclusion,omitempty"`
+	Rejected          []string         `json:"rejected,omitempty"` // outbox 里 .rejected 文件名
+	Closed            bool             `json:"closed"`
+}
+
+type LocalConclusion struct {
+	Seq             int    `json:"seq"`
+	Owner           string `json:"owner"`
+	Summary         string `json:"summary"`
+	AwaitingConfirm bool   `json:"awaiting_confirm"`
+	Path            string `json:"path"`
 }
 
 type LocalModuleRequest struct {
-	Name string `json:"name"`
-	Dir  string `json:"dir"`
+	Name        string `json:"name"`
+	Dir         string `json:"dir"`
+	CodexThread string `json:"codex_thread,omitempty"`
 }
 
-type LocalRules struct {
-	Text string `json:"text"`
+type LocalModulePatch struct {
+	Name     string `json:"name,omitempty"`
+	Mode     string `json:"mode,omitempty"`
+	RoundCap int    `json:"round_cap,omitempty"`
 }
 
 type LocalSettings struct {
-	ClaudePath  string `json:"claude_path"`
-	CodexPath   string `json:"codex_path"`
-	DefaultMode string `json:"default_mode"`
+	CodexPath         string `json:"codex_path"`
+	CodexOK           bool   `json:"codex_ok"`
+	DefaultMode       string `json:"default_mode"`
+	DefaultCap        int    `json:"default_cap"`
+	NotifyEveryLetter bool   `json:"notify_every_letter"`
+}
+
+type LocalConversation struct {
+	ID        string    `json:"id"`
+	Name      string    `json:"name"`
+	Title     string    `json:"title,omitempty"`
+	Cwd       string    `json:"cwd"`
+	Status    string    `json:"status,omitempty"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+type LocalAttachRequest struct {
+	Side   string `json:"side"`
+	Thread string `json:"thread"`
+}
+
+type LocalState struct {
+	Version   string    `json:"version"`
+	StartedAt time.Time `json:"started_at"`
+	CodexOK   bool      `json:"codex_ok"`
 }

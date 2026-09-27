@@ -98,3 +98,36 @@ func TestLoginAndMe(t *testing.T) {
 		t.Fatalf("无凭证应 401, got %d", resp.StatusCode)
 	}
 }
+
+func TestLoopbackWithoutKeyIsHumanOnlyInLocalMode(t *testing.T) {
+	// 线上（无 local）：回环不带钥匙 → 401（永久锚点）
+	ts, _, _ := newTestServer(t)
+	resp, _ := http.Get(ts.URL + "/api/me")
+	if resp.StatusCode != 401 {
+		t.Fatalf("线上回环免钥匙不该存在: %d", resp.StatusCode)
+	}
+	// 本地：回环不带钥匙 → 200 且是 hou
+	ts2, srv, _, users := newLocalTestServer(t)
+	resp, _ = http.Get(ts2.URL + "/api/me")
+	if resp.StatusCode != 200 {
+		t.Fatalf("本地回环免钥匙应 200: %d", resp.StatusCode)
+	}
+	var me api.Me
+	json.NewDecoder(resp.Body).Decode(&me)
+	if me.Username != "hou" {
+		t.Fatalf("应是 hou: %+v", me)
+	}
+	// 本地但非回环 → 401
+	req := httptest.NewRequest("GET", "/api/me", nil)
+	req.RemoteAddr = "10.0.0.5:1"
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != 401 {
+		t.Fatalf("非回环无钥匙应 401: %d", rec.Code)
+	}
+	// 本地 + agent token 仍按 token
+	r := agentGet(t, ts2, users["hou"].AgentToken, "/api/me")
+	if r.StatusCode != 200 {
+		t.Fatalf("agent token 仍有效: %d", r.StatusCode)
+	}
+}

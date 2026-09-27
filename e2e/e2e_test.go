@@ -487,18 +487,18 @@ func TestAnchorM8LocalConsole(t *testing.T) {
 	}
 	t.Cleanup(func() { st.Close() })
 	srv := server.New(st, "http://127.0.0.1:18096", t.TempDir())
-	srv.SetLocal(cli.NewLocalManagerForTest(ld))
+	srv.SetLocal(cli.NewLocalManagerForTest(ld), "hou")
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
 	// 人登录（密码在 human.txt）
 	pw := readPassword(t, filepath.Join(ld, "human.txt"))
 	cookie := login(t, ts, "hou", pw)
-	// agent token 打本地接口 → 403
+	// M9：本地控制台只查回环，不再区分人/agent 钥匙——回环 + agent token 也放行（守卫循环要用）
 	claudeU, _ := st.UserByName("claude")
 	req, _ = http.NewRequest("GET", ts.URL+"/api/local/modules", nil)
 	req.Header.Set("Authorization", "Bearer "+claudeU.AgentToken)
-	if resp, _ := http.DefaultClient.Do(req); resp.StatusCode != 403 {
-		t.Fatalf("锚点M8-2 agent 打本地接口必须 403, got %d", resp.StatusCode)
+	if resp, _ := http.DefaultClient.Do(req); resp.StatusCode != 200 {
+		t.Fatalf("锚点M8-2（M9 更新：回环免人/agent 之分）agent 打本地接口应 200, got %d", resp.StatusCode)
 	}
 	// 人在网页新建模块
 	proj := t.TempDir()
@@ -538,24 +538,24 @@ func TestAnchorM8LocalConsole(t *testing.T) {
 	if len(entries) != 1 {
 		t.Fatalf("锚点M8-4 应落 1 封: %v", entries)
 	}
-	// 心跳 → 模块列表 bridge_alive
-	c.Heartbeat()
+	// 模块列表应能列出刚建的 grammar（M9：api.LocalModule 已删 BridgeAlive/LastHeartbeat 字段，
+	// 心跳/桥接存活改由别的机制表达，见 Task 9；这里只验证列表本身可达）。
 	req, _ = http.NewRequest("GET", ts.URL+"/api/local/modules", nil)
 	req.AddCookie(&http.Cookie{Name: "relais_session", Value: cookie})
 	resp, _ = http.DefaultClient.Do(req)
 	var mods []api.LocalModule
 	json.NewDecoder(resp.Body).Decode(&mods)
-	if len(mods) != 1 || !mods[0].BridgeAlive["codex"] || mods[0].BridgeAlive["claude"] {
-		t.Fatalf("锚点M8-5 心跳应显示 codex 在跑、claude 未跑: %+v", mods)
+	if len(mods) != 1 || mods[0].Name != "grammar" {
+		t.Fatalf("锚点M8-5 模块列表应含 grammar: %+v", mods)
 	}
-	// 非回环 RemoteAddr → 403（直接调 handler）
+	// 非回环 RemoteAddr → 401（M9：localOnly 只查回环，直接调 handler）
 	rr := httptest.NewRecorder()
 	r2 := httptest.NewRequest("GET", "/api/local/modules", nil)
 	r2.AddCookie(&http.Cookie{Name: "relais_session", Value: cookie})
 	r2.RemoteAddr = "192.168.1.9:5555"
 	srv.Handler().ServeHTTP(rr, r2)
-	if rr.Code != 403 {
-		t.Fatalf("锚点M8-6 非回环必须 403, got %d", rr.Code)
+	if rr.Code != 401 {
+		t.Fatalf("锚点M8-6 非回环必须 401, got %d", rr.Code)
 	}
 }
 

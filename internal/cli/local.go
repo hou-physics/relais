@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/hou-physics/relais/internal/api"
 )
 
 const localHuman = "hou"
@@ -104,7 +106,7 @@ func runLocalInit(args []string) error {
 		fmt.Printf("网页 %s 登录账号: %s\n初始密码: %s（已存到 %s）\n", res.BaseURL, res.HumanUser, res.HumanPassword, shq(filepath.Join(ld, "human.txt")))
 	}
 	for _, m := range modules {
-		if _, err := mgr.CreateModule(m, root); err != nil {
+		if _, err := mgr.CreateModule(api.LocalModuleRequest{Name: m, Dir: root}); err != nil {
 			return err
 		}
 	}

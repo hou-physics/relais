@@ -9,8 +9,8 @@ import (
 	"runtime"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
-	"time"
 
 	"github.com/hou-physics/relais/internal/api"
 	"github.com/hou-physics/relais/internal/guide"
@@ -223,7 +223,10 @@ func validModuleName(name string) bool {
 	return name != "" && !strings.ContainsAny(name, " /\\\t\n") && len(name) <= 64
 }
 
-func (m *localManager) CreateModule(name, dir string) (api.LocalModule, error) {
+// CreateModule：M9 接口签名（api.LocalModuleRequest）的适配层；req.CodexThread（M9 新字段，codex
+// 侧对话登记）留给 Task 9 处理，这里先忽略。
+func (m *localManager) CreateModule(req api.LocalModuleRequest) (api.LocalModule, error) {
+	name, dir := req.Name, req.Dir
 	var out api.LocalModule
 	if !validModuleName(name) {
 		return out, invalid("模块名 %q 不能为空、含空格或斜杠", name)
@@ -390,16 +393,10 @@ func (m *localManager) moduleInfo(st *store.Store, name, dir string) (api.LocalM
 	case a.Paused:
 		state = "paused"
 	}
-	n := 0
-	if entries, err := os.ReadDir(filepath.Join(dir, "relais", "conclusions")); err == nil {
-		for _, e := range entries {
-			if _, ok := conclusionIDFor(e.Name(), name); ok {
-				n++
-			}
-		}
-	}
+	// M9 的 LocalModule 已不再有 Conclusions/BridgeAlive/LastHeartbeat 字段（改由
+	// outbox/守卫循环那一套状态取代，Task 9 重写）；这里先只填还能对上的字段。
 	return api.LocalModule{Name: name, Dir: dir, Mode: a.Mode, Round: store.Round(a.RoundCount), RoundCap: store.Round(a.Cap),
-		State: state, NeedsHumanQ: a.NeedsHumanQ, Conclusions: n, BridgeAlive: map[string]bool{}, LastHeartbeat: map[string]time.Time{}}, nil
+		State: state, NeedsHumanQ: a.NeedsHumanQ}, nil
 }
 
 // conclusionIDFor：文件名是否为 <channel>-<26位ULID>.md（与 conclusion.go 的规则一致）。
@@ -481,26 +478,9 @@ func (m *localManager) moduleDir(name string) (string, error) {
 	return "", invalid("模块 %q 不存在", name)
 }
 
-func (m *localManager) Rules(name string) (string, error) {
-	dir, err := m.moduleDir(name)
-	if err != nil {
-		return "", err
-	}
-	data, err := os.ReadFile(filepath.Join(dir, "relais", "RULES.md"))
-	if os.IsNotExist(err) {
-		return "", nil
-	}
-	return string(data), err
-}
-
-func (m *localManager) PutRules(name, text string) error {
-	dir, err := m.moduleDir(name)
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(filepath.Join(dir, "relais", "RULES.md"), []byte(text), 0o644)
-}
-
+// Settings/PutSettings：M9 的 api.LocalSettings 去掉了 ClaudePath（不再是 codex 之外可经此接口
+// 改的字段）、加了 CodexOK/DefaultCap/NotifyEveryLetter。这里只做字段级适配，语义（比如
+// default_cap/notify 具体怎么用）留给 Task 9。
 func (m *localManager) Settings() (api.LocalSettings, error) {
 	st, _, err := m.open()
 	if err != nil {
@@ -508,11 +488,23 @@ func (m *localManager) Settings() (api.LocalSettings, error) {
 	}
 	defer st.Close()
 	var s api.LocalSettings
-	s.ClaudePath, _ = st.GetSetting("local.claude_path")
 	s.CodexPath, _ = st.GetSetting("local.codex_path")
 	s.DefaultMode, _ = st.GetSetting("local.default_mode")
 	if s.DefaultMode == "" {
 		s.DefaultMode = "supervised"
+	}
+	if capStr, _ := st.GetSetting("local.default_cap"); capStr != "" {
+		if n, err := strconv.Atoi(capStr); err == nil {
+			s.DefaultCap = n
+		}
+	}
+	if s.DefaultCap == 0 {
+		s.DefaultCap = 8
+	}
+	notify, _ := st.GetSetting("local.notify_every_letter")
+	s.NotifyEveryLetter = notify == "true"
+	if fi, err := os.Stat(s.CodexPath); err == nil && fi.Mode().IsRegular() {
+		s.CodexOK = true
 	}
 	return s, nil
 }
@@ -521,32 +513,65 @@ func (m *localManager) PutSettings(s api.LocalSettings) error {
 	if s.DefaultMode != "supervised" && s.DefaultMode != "autopilot" {
 		return invalid("默认模式只能是 supervised 或 autopilot")
 	}
-	paths := map[string]string{}
-	for name, p := range map[string]string{"claude": s.ClaudePath, "codex": s.CodexPath} {
-		abs, err := checkAgentPath(name, p)
-		if err != nil {
-			return err
-		}
-		paths[name] = abs
+	codexAbs, err := checkAgentPath("codex", s.CodexPath)
+	if err != nil {
+		return err
 	}
 	st, cfg, err := m.open()
 	if err != nil {
 		return err
 	}
 	defer st.Close()
-	for k, v := range map[string]string{"local.claude_path": paths["claude"], "local.codex_path": paths["codex"], "local.default_mode": s.DefaultMode} {
+	cap := s.DefaultCap
+	if cap <= 0 {
+		cap = 8
+	}
+	notify := "false"
+	if s.NotifyEveryLetter {
+		notify = "true"
+	}
+	for k, v := range map[string]string{
+		"local.codex_path": codexAbs, "local.default_mode": s.DefaultMode,
+		"local.default_cap": strconv.Itoa(cap), "local.notify_every_letter": notify,
+	} {
 		if err := st.SetSetting(k, v); err != nil {
 			return err
 		}
 	}
-	for _, side := range []string{"claude", "codex"} {
-		u, err := st.UserByName(side)
-		if err != nil {
-			return err
-		}
-		if err := m.writeSide(side, cfg.BaseURL, u.AgentToken, paths[side]); err != nil {
-			return err
-		}
+	u, err := st.UserByName("codex")
+	if err != nil {
+		return err
 	}
-	return nil
+	return m.writeSide("codex", cfg.BaseURL, u.AgentToken, codexAbs)
+}
+
+// ---- M9 Task 9 未完成：以下方法只满足 server.LocalManager 接口以保持编译通过，
+// 真实实现（模块改名/重开/删除、对话列表、codex 接入登记、重投、汇总状态）由 Task 9 补齐。
+
+func (m *localManager) PatchModule(name string, p api.LocalModulePatch) (api.LocalModule, error) {
+	return api.LocalModule{}, errors.New("M9 Task 9 未完成")
+}
+
+func (m *localManager) ReopenModule(name string) error {
+	return errors.New("M9 Task 9 未完成")
+}
+
+func (m *localManager) DeleteModule(name string, files bool) error {
+	return errors.New("M9 Task 9 未完成")
+}
+
+func (m *localManager) Conversations(side, dir string) ([]api.LocalConversation, error) {
+	return nil, errors.New("M9 Task 9 未完成")
+}
+
+func (m *localManager) AttachModule(name string, req api.LocalAttachRequest) (api.LocalModule, error) {
+	return api.LocalModule{}, errors.New("M9 Task 9 未完成")
+}
+
+func (m *localManager) Redeliver(name string) error {
+	return errors.New("M9 Task 9 未完成")
+}
+
+func (m *localManager) State() api.LocalState {
+	return api.LocalState{}
 }
