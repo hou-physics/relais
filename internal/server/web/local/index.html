@@ -1,1 +1,103 @@
-<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>Relais · 本地</title><link rel="stylesheet" href="/local/style.css"></head><body><div id="app">控制台加载中…</div><script src="/local/app.js"></script></body></html>
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Relais · 本地</title>
+<link rel="stylesheet" href="/local/style.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand"><span class="eyebrow">RELAIS · 本地</span><span id="daemon-dot" class="dot" title="守卫"></span><span id="daemon-text" class="muted">连接中…</span></div>
+  <div class="top-actions">
+    <button class="btn ghost" id="open-new">新建模块</button>
+    <button class="btn ghost" id="open-settings">设置</button>
+  </div>
+</header>
+
+<main class="layout">
+  <aside class="side">
+    <div class="eyebrow">模块</div>
+    <div id="module-list" class="module-list"></div>
+    <div id="empty" class="empty" hidden>
+      <p>还没有模块。</p>
+      <button class="btn" id="empty-new">新建第一个模块</button>
+    </div>
+  </aside>
+
+  <section class="main" id="main" hidden>
+    <div class="card" id="now">
+      <div class="row between"><div class="eyebrow">现在</div><div id="now-round" class="mono muted"></div></div>
+      <h2 id="now-line"></h2>
+      <div id="progress" class="progress" hidden><span></span></div>
+      <div class="sides">
+        <div class="side-row"><span class="eyebrow">CLAUDE</span><span id="side-claude"></span><button class="btn tiny ghost copy" data-copy-side="claude" hidden>复制接入指令</button></div>
+        <div class="side-row"><span class="eyebrow">CODEX</span><span id="side-codex"></span><button class="btn tiny ghost copy" data-copy-side="codex" hidden>复制接入指令</button><button class="btn tiny ghost" id="pick-codex" hidden>从列表选</button></div>
+      </div>
+      <div id="codex-pick" class="pick" hidden></div>
+    </div>
+
+    <div class="card mint" id="todo" hidden>
+      <div class="eyebrow">该你做</div>
+      <div id="todo-body"></div>
+    </div>
+
+    <div class="card" id="letters">
+      <div class="row between"><div class="eyebrow">往来</div><span id="letters-count" class="mono muted"></span></div>
+      <div id="timeline" class="timeline"></div>
+      <form id="composer" class="composer">
+        <textarea id="compose-body" rows="4" placeholder="写给两侧的信。第一行会作为摘要。"></textarea>
+        <div class="row between">
+          <label class="muted">先回 <select id="compose-first"><option value="claude">Claude</option><option value="codex">Codex</option></select></label>
+          <button class="btn" type="submit">发出</button>
+        </div>
+      </form>
+    </div>
+
+    <details class="card" id="module-settings">
+      <summary class="eyebrow">本模块</summary>
+      <div class="form">
+        <label>名称 <input id="ms-name"></label>
+        <label>模式 <select id="ms-mode"><option value="supervised">监督：握手后我确认才开工</option><option value="autopilot">甩手：握手即开工</option></select></label>
+        <label>回合上限 <input id="ms-cap" type="number" min="1" max="99"></label>
+        <div class="row gap">
+          <button class="btn" id="ms-save">保存</button>
+          <button class="btn ghost" id="ms-close">关闭模块</button>
+          <button class="btn ghost" id="ms-reopen" hidden>重开模块</button>
+          <button class="btn danger" id="ms-delete">删除</button>
+        </div>
+        <div class="muted small">目录：<span id="ms-dir" class="mono"></span></div>
+      </div>
+    </details>
+  </section>
+</main>
+
+<dialog id="new-module">
+  <form method="dialog" class="form" id="new-form">
+    <div class="eyebrow">新建模块</div>
+    <label>名字 <input id="nm-name" required placeholder="例如：黑客松巡天智能体"></label>
+    <label>项目目录 <select id="nm-repo"></select></label>
+    <label id="nm-dir-wrap" hidden>手填路径 <input id="nm-dir" placeholder="/Users/你/项目"></label>
+    <label>现在接入 Codex 对话（可选） <select id="nm-codex"><option value="">稍后再说</option></select></label>
+    <div class="row gap"><button class="btn" value="ok">创建</button><button class="btn ghost" value="cancel" formnovalidate>取消</button></div>
+    <div id="nm-error" class="error"></div>
+  </form>
+</dialog>
+
+<dialog id="settings">
+  <form method="dialog" class="form" id="settings-form">
+    <div class="eyebrow">设置</div>
+    <label>codex 命令路径 <span class="row gap"><input id="st-codex" class="grow"><button class="btn tiny ghost" type="button" id="st-test">测试</button></span><span id="st-codex-ok" class="small muted"></span></label>
+    <label>默认模式 <select id="st-mode"><option value="supervised">监督</option><option value="autopilot">甩手</option></select></label>
+    <label>默认回合上限 <input id="st-cap" type="number" min="1" max="99"></label>
+    <label class="row gap"><input type="checkbox" id="st-notify"> 每封信都弹桌面通知</label>
+    <div class="row gap"><button class="btn" value="ok">保存</button><button class="btn ghost" value="cancel" formnovalidate>取消</button></div>
+    <div id="st-error" class="error"></div>
+  </form>
+</dialog>
+
+<script src="/vendor/marked.min.js"></script>
+<script src="/vendor/purify.min.js"></script>
+<script src="/local/app.js"></script>
+</body>
+</html>

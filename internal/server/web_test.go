@@ -237,3 +237,37 @@ func TestWebHasConsoleControls(t *testing.T) {
 		t.Fatalf("boot() 须先调 detectLocal() 再调 loadChannels()（detectLocal@%d loadChannels@%d）", di, li)
 	}
 }
+
+func TestLocalConsolePage(t *testing.T) {
+	ts, _, _, _ := newLocalTestServer(t)
+	resp, _ := http.Get(ts.URL + "/")
+	body, _ := io.ReadAll(resp.Body)
+	s := string(body)
+	for _, want := range []string{`id="module-list"`, `id="now"`, `id="todo"`, `id="timeline"`, `id="composer"`, `id="new-module"`, `id="settings"`, `/local/app.js`, `/local/style.css`, `/vendor/marked.min.js`, `/vendor/purify.min.js`} {
+		if !strings.Contains(s, want) {
+			t.Fatalf("控制台缺 %q", want)
+		}
+	}
+	for _, bad := range []string{"login", "invite", "admin", "http://", "https://", "data-i18n", "Deutsch"} {
+		if strings.Contains(s, bad) {
+			t.Fatalf("控制台不该含 %q", bad)
+		}
+	}
+	resp, _ = http.Get(ts.URL + "/local/style.css")
+	css, _ := io.ReadAll(resp.Body)
+	for _, want := range []string{"--ink: #010120", "--line: #ebebeb", "--mint: #c8f6f9", "#fc4c02", "#ef2cc1", "#bdbbff", "prefers-color-scheme: dark", "border-radius: 4px"} {
+		if !strings.Contains(string(css), want) {
+			t.Fatalf("样式缺 %q", want)
+		}
+	}
+	if strings.Contains(string(css), "box-shadow") || strings.Contains(string(css), "@import") {
+		t.Fatal("无阴影、不引外部样式")
+	}
+	resp, _ = http.Get(ts.URL + "/local/app.js")
+	js, _ := io.ReadAll(resp.Body)
+	for _, want := range []string{"/api/local/modules", "/api/events", "auto/kickoff", "auto/resume", "redeliver", "conversations", "接入 relais 模块"} {
+		if !strings.Contains(string(js), want) {
+			t.Fatalf("脚本缺 %q", want)
+		}
+	}
+}

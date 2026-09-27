@@ -9,6 +9,7 @@ go test ./...
 bash -n "安装 Relais 本地模式.command"
 if command -v node >/dev/null 2>&1; then
   node --check internal/server/web/app.js
+  node --check internal/server/web/local/app.js
   tmpjs=$(mktemp "${TMPDIR:-/tmp}/relais-join.XXXXXX.js")
   trap 'rm -f "$tmpjs"' EXIT
   sed -n '/<script>/,/<\/script>/p' internal/server/web/join.html | sed '1d;$d' > "$tmpjs"
