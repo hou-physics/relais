@@ -5,6 +5,14 @@
 
 ---
 
+## 2026-09-27 · D44 M8 执行期实现选择
+
+- **问题**：spec §3.2 说把本地逻辑抽成 `internal/local` 包供 CLI 与服务器共用；`internal/cli` 已依赖 `internal/server`（RunServe），server 再依赖 local、local 再用 cli 的 hook/配置助手会成环。
+- **考虑过**：把 hook 生成、两侧配置、项目初始化、plist 全搬进新包——被否：搬动量大、只为绕环。
+- **选择**：server 定义 `LocalManager` 接口（`internal/server/local.go`），`internal/cli/localmgr.go` 实现，`RunServe` 在 `server.toml` 有 `local_dir` 时注入。共用逻辑仍只有一份。另：网页开题以本人身份发信、信首行 `@<side> 先回` 由接话规则识别（spec §6）；bridge 心跳只存服务器内存，20 秒内有心跳算在跑。
+- **状态**：live（v0.6.0-m8）。
+- **反转触发**：若第三个消费者（如 M9 密封轮）也要这套逻辑且不在 cli 包 → 届时再抽包。
+
 ## 2026-09-26 · D42 M7 执行期实现选择（对照 spec 的三处）
 
 - **问题**：M7 落地时三处实现与 spec 文字不完全一致，记档防后人"修正"。

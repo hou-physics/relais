@@ -1,5 +1,7 @@
 package cli
 
+import "github.com/hou-physics/relais/internal/server"
+
 // SaveGlobalForTest 供 e2e 测试注入身份；生产代码不得调用。
 func SaveGlobalForTest(server, token, username string) error {
 	return saveGlobal(&GlobalConfig{Server: server, Token: token, Username: username})
@@ -15,3 +17,9 @@ func NewClientForTest() (*Client, error) {
 	c, _, err := newClient()
 	return c, err
 }
+
+// NewLocalManagerForTest 暴露本地管理器；生产代码不得调用。
+func NewLocalManagerForTest(ld string) server.LocalManager { return newLocalManager(ld) }
+
+// LoadBridgeTargetsForTest 暴露 bridge 目标重读；生产代码不得调用。
+func LoadBridgeTargetsForTest() []bridgeTarget { ts, _ := loadBridgeTargets(); return ts }

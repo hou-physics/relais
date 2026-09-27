@@ -237,3 +237,23 @@ func decodeTOMLFile(t *testing.T, path string, v any) {
 		t.Fatal(err)
 	}
 }
+
+func TestCreateModuleWritesLocalGuideForBothSides(t *testing.T) {
+	m, ld := newMgrForTest(t)
+	proj := t.TempDir()
+	if _, err := m.CreateModule("grammar", proj); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(filepath.Join(proj, "relais", "AGENT.md"))
+	s := string(data)
+	for _, want := range []string{"## 本地模式（模块 grammar）", filepath.Join(ld, "sides", "claude"), filepath.Join(ld, "sides", "codex"), "拿去讨论", "开工"} {
+		if !strings.Contains(s, want) {
+			t.Fatalf("AGENT.md 缺 %q", want)
+		}
+	}
+	m.CreateModule("grammar", proj)
+	data2, _ := os.ReadFile(filepath.Join(proj, "relais", "AGENT.md"))
+	if strings.Count(string(data2), "## 本地模式（模块 grammar）") != 1 {
+		t.Fatal("重复创建不应重复追加说明")
+	}
+}

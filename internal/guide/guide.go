@@ -34,3 +34,26 @@ Relais 用于团队成员的 agent 之间互发结构化消息，通过 relais �
 - 如果遇到需要雇主定夺的重大决策、或你需要事实澄清，不要擅自替雇主拍板：只输出一行 `+"`"+`NEEDS_HUMAN: <问题>`+"`"+`，系统会暂停并把问题交给人。
 `, username, channel)
 }
+
+// LocalText：本地单人模式给工作脑的说明（写进项目 relais/AGENT.md，M8 spec §7）。
+// 返回一侧的 ### 小节；模块级 "## 本地模式（模块 X）" 标题由调用方写一次，作为防重复标记。
+func LocalText(side, channel, sideDir string) string {
+	return fmt.Sprintf(`
+### %[1]s 侧（模块 %[2]s）
+
+你是雇主在模块 %[2]q 的「工作脑」，身份是 %[1]s 侧。讨论由另一套无头「讨论脑」自动进行，你只负责两件事，雇主一句话触发，不要反问：
+
+1. 雇主说「把这个拿去讨论」「让对方看看」时：把当前上下文里与议题相关的背景压缩成一封信（Markdown，文件开头写
+   ---
+   summary: <一句话摘要>
+   ---
+   然后正文：背景、你的观点、要对方回答的问题），保存为文件后执行：
+   RELAIS_CONFIG_DIR="%[3]s" RELAIS_CHANNEL="%[2]s" relais send <文件路径>
+   发出后告诉雇主"已发出，去网页看进度"。不要等回信，回信由讨论脑处理。
+
+2. 雇主说「开工」「按结论做」时：读 relais/conclusions/ 目录下文件名以 %[2]s- 开头的最新一份（按文件名排序取最后一个），按它的正文实施。
+   实施完成后把做了什么、怎么验证写成一封信（summary: 已完成：…），用上面同样的命令发出。
+
+规矩：relais/RULES.md 是本项目铁律，先读；不要读 relais/inbox/ 里其他模块的信；不要自己跑 relais auto-turn 等 hook 命令。
+`, side, channel, sideDir)
+}

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/hou-physics/relais/internal/api"
+	"github.com/hou-physics/relais/internal/guide"
 	"github.com/hou-physics/relais/internal/server"
 	"github.com/hou-physics/relais/internal/store"
 )
@@ -290,20 +291,22 @@ func (m *localManager) CreateModule(name, dir string) (api.LocalModule, error) {
 			return out, err
 		}
 	}
-	if err := writeLocalAgentGuide(dir, m.ld, name); err != nil { // Task 6 才有 guide.LocalText；本任务先写占位实现见下
+	if err := writeLocalAgentGuide(dir, m.ld, name); err != nil {
 		return out, err
 	}
 	return m.moduleInfo(st, name, dir)
 }
 
-// writeLocalAgentGuide：把本地模式的工作脑说明追加到 <dir>/relais/AGENT.md（Task 6 换成 guide.LocalText；本任务只保证文件存在并含标记行）。
+// writeLocalAgentGuide：把本地模式的工作脑说明（两侧各一段，guide.LocalText）追加到 <dir>/relais/AGENT.md。
+// 标记按模块区分，同一目录的第二个模块会得到自己的说明段；同一模块重复创建不重复追加。
 func writeLocalAgentGuide(dir, ld, name string) error {
 	p := filepath.Join(dir, "relais", "AGENT.md")
 	data, _ := os.ReadFile(p)
-	if strings.Contains(string(data), "## 本地模式") {
+	marker := fmt.Sprintf("## 本地模式（模块 %s）", name)
+	if strings.Contains(string(data), marker) {
 		return nil
 	}
-	add := fmt.Sprintf("\n## 本地模式（模块 %s）\n本侧配置目录：%s\n", name, filepath.Join(ld, "sides", "<claude|codex>"))
+	add := "\n" + marker + "\n" + guide.LocalText("claude", name, filepath.Join(ld, "sides", "claude")) + guide.LocalText("codex", name, filepath.Join(ld, "sides", "codex"))
 	return os.WriteFile(p, append(data, []byte(add)...), 0o644)
 }
 

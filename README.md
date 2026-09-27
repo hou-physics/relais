@@ -56,21 +56,19 @@ Hou 的 Mac                    香港 VPS                     伙伴的 Windows
 
 ⚠️ Windows：不要在 --hook 命令行里直接写 %RELAIS_MSG_*%（cmd 会在解析前展开，恶意摘要可能注入命令）；请在脚本内部读取环境变量。Unix 的 $VAR 在运行时展开、不会被二次解析，是安全的。
 
-## 本地单人模式（M7）
+## 本地单人模式（M8 控制台）
 
-一个人、一台 Mac，让本机的 Claude Code 与 Codex 通过 Relais 自己讨论出结论，人只做裁决。
+一个人、一台 Mac，让本机的 Claude Code 与 Codex 通过 Relais 自己讨论出结论，人只做裁决。全程在浏览器里完成，不需要敲命令。
 
-```bash
-relais local init --codex ~/.codex/plugins/.plugin-appserver/codex grammar
-RELAIS_CONFIG_DIR="$HOME/Library/Application Support/relais-local/sides/claude" relais send 第一封.md
-relais conclusion
-```
+1. **安装**：双击仓库根目录的 `安装 Relais 本地模式.command`。它编译并安装 `relais`，起本机服务、两侧身份与常驻 bridge，最后在浏览器打开控制台，并显示网页登录账号与初始密码（也存在 `~/Library/Application Support/relais-local/human.txt`）。
+2. **新建模块**：控制台「模块」页 →「新建模块」，填模块名、点选项目文件夹。项目里会生成 `relais/`（配置、`RULES.md` 铁律、`AGENT.md` 工作脑说明），两侧 bridge 在几秒内自动接上（模块卡片上的心跳灯变绿）。
+3. **开题**：进入模块频道 →「开题」，写议题，选哪一侧先回（信首行 `@codex 先回` / `@claude 先回`）。之后两侧讨论脑按回合自动来回，时间线实时显示。
+4. **裁决**：两侧卡住、承接方分歧或回合打满时，频道里会出现 needs-human，在网页回答即可（只有该接话的一侧会回）。监督模式下两侧 RESOLVED 握手后点「确认开工」；甩手模式握手即自动开工。
+5. **开工**：结论落到项目的 `relais/conclusions/<模块>-*.md`，结论卡片上点「复制开工指令」，贴给你正在用的 Claude Code / Codex（工作脑）。
 
-第一行起本机服务、两侧身份、频道、hook 与 launchd 常驻；第二行由 Claude 侧开题（frontmatter 写 `summary`），之后两侧讨论脑按回合自动来回；谈拢后结论落到 `relais/conclusions/`，工作脑用第三行读取并开工。`relais local status` 看当前状态，`relais local close <频道>` 关闭频道。
+也可以直接对工作脑说话：说"把这个拿去讨论"，它会把当前背景压缩成一封信发进模块；说"开工"，它会读最新结论并实施（说明写在项目的 `relais/AGENT.md`）。
 
-人只在三处出面：**开题**（写第一封）、**needs-human**（两侧卡住、承接方分歧或回合打满时，在网页回答，回答以本人身份进频道）、**确认开工**（监督模式下两侧 RESOLVED 握手后，在网页点"确认开工"；甩手模式握手即自动开工）。
-
-你在网页回答后只有该接话的一侧会回。
+命令行仍然可用（`relais local bootstrap|init|status|close …`、`relais conclusion`），但不再必需。
 
 ## 消息格式
 
