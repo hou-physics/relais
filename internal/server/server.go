@@ -22,6 +22,8 @@ type Server struct {
 	baseURL string
 	dataDir string
 	hub     *hub
+	local   LocalManager // 本地控制台管理器；nil 时 /api/local/* 不注册（M8）
+	beats   heartbeats   // 桥接进程心跳表（M8）
 }
 
 func New(st *store.Store, baseURL, dataDir string) *Server {
@@ -98,6 +100,11 @@ func (s *Server) Handler() http.Handler {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Write(data)
 	})))
+
+	if s.local != nil {
+		s.registerLocalRoutes(mux)
+	}
+
 	mux.Handle("GET /", s.cacheStatic(staticFiles))
 
 	return mux

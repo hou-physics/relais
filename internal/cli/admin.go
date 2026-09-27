@@ -59,7 +59,12 @@ func RunServe(args []string) error {
 	}
 	defer st.Close()
 	fmt.Printf("relais 服务启动: %s (base_url=%s)\n", cfg.Listen, cfg.BaseURL)
-	return http.ListenAndServe(cfg.Listen, server.New(st, cfg.BaseURL, cfg.DataDir).Handler())
+	srv := server.New(st, cfg.BaseURL, cfg.DataDir)
+	if cfg.LocalDir != "" {
+		srv.SetLocal(newLocalManager(cfg.LocalDir))
+		fmt.Printf("本地模式管理接口已启用（%s）\n", cfg.LocalDir)
+	}
+	return http.ListenAndServe(cfg.Listen, srv.Handler())
 }
 
 func RunUser(args []string) error {
