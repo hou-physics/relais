@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"net"
@@ -34,11 +35,13 @@ const rulesTemplate = `# 本项目铁律（两侧讨论脑每轮都读）
 
 func RunLocal(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("用法: relais local <init|status|close> ...")
+		return fmt.Errorf("用法: relais local <init|bootstrap|status|close> ...")
 	}
 	switch args[0] {
 	case "init":
 		return runLocalInit(args[1:])
+	case "bootstrap":
+		return runLocalBootstrap(args[1:])
 	case "status":
 		return runLocalStatus()
 	case "close":
@@ -108,27 +111,8 @@ func runLocalInit(args []string) error {
 	scPath := localServerConfigPath(ld)
 	// 常驻：serve + 两个 bridge（spec §3.1：已在跑则跳过——plist 已存在就不重装、不重载）
 	if !*noService {
-		relais, _ := os.Executable()
-		type svc struct {
-			label string
-			args  []string
-			env   map[string]string
-		}
-		svcs := []svc{{"com.relais.local.serve", []string{relais, "serve", "--config", scPath}, nil}}
-		for _, side := range []string{"claude", "codex"} {
-			d := filepath.Join(ld, "sides", side)
-			svcs = append(svcs, svc{"com.relais.local.bridge." + side,
-				[]string{relais, "bridge", "--interval", "5", "--hook", filepath.Join(d, "hooks", "auto-reply.sh")},
-				map[string]string{"RELAIS_CONFIG_DIR": d, "HOME": os.Getenv("HOME"), "PATH": os.Getenv("PATH")}})
-		}
-		for _, v := range svcs {
-			if !shouldInstallPlist(plistPathFor(v.label)) {
-				fmt.Printf("常驻 %s 已存在，跳过\n", v.label)
-				continue
-			}
-			if _, err := installPlist(v.label, v.args, v.env); err != nil {
-				return err
-			}
+		if err := installLocalServices(ld, scPath); err != nil {
+			return err
 		}
 		waitListen(*listen, 5*time.Second)
 	}
@@ -148,6 +132,78 @@ func runLocalInit(args []string) error {
 			shq(scPath),
 			shq(filepath.Join(ld, "sides", "claude")), shq(filepath.Join(ld, "sides", "claude", "hooks", "auto-reply.sh")),
 			shq(filepath.Join(ld, "sides", "codex")), shq(filepath.Join(ld, "sides", "codex", "hooks", "auto-reply.sh")))
+	}
+	return nil
+}
+
+// installLocalServices：serve + 两个 bridge 的 launchd 常驻；已存在的 plist 跳过（spec §3.1）。
+// 提示信息走 stderr，保证 bootstrap --json 的 stdout 只有一行 JSON。
+func installLocalServices(ld, scPath string) error {
+	relais, _ := os.Executable()
+	type svc struct {
+		label string
+		args  []string
+		env   map[string]string
+	}
+	svcs := []svc{{"com.relais.local.serve", []string{relais, "serve", "--config", scPath}, nil}}
+	for _, side := range []string{"claude", "codex"} {
+		d := filepath.Join(ld, "sides", side)
+		svcs = append(svcs, svc{"com.relais.local.bridge." + side,
+			[]string{relais, "bridge", "--interval", "5", "--hook", filepath.Join(d, "hooks", "auto-reply.sh")},
+			map[string]string{"RELAIS_CONFIG_DIR": d, "HOME": os.Getenv("HOME"), "PATH": os.Getenv("PATH")}})
+	}
+	for _, v := range svcs {
+		if !shouldInstallPlist(plistPathFor(v.label)) {
+			fmt.Fprintf(os.Stderr, "常驻 %s 已存在，跳过\n", v.label)
+			continue
+		}
+		if _, err := installPlist(v.label, v.args, v.env); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// runLocalBootstrap：只搭环境（服务器配置、两侧 agent、hook、常驻），不建模块——
+// 模块由控制台网页新建。双击安装脚本调用它（--json）。
+func runLocalBootstrap(args []string) error {
+	fs := flag.NewFlagSet("local bootstrap", flag.ContinueOnError)
+	claudePath := fs.String("claude", "", "claude 可执行文件路径（默认 PATH 侦测）")
+	codexPath := fs.String("codex", "", "codex 可执行文件路径（默认 PATH 侦测）")
+	listen := fs.String("listen", "127.0.0.1:8080", "本地服务器监听地址")
+	noService := fs.Bool("no-service", false, "不安装 launchd 常驻")
+	asJSON := fs.Bool("json", false, "只输出一行 JSON（安装脚本用）")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	ld, err := localDir()
+	if err != nil {
+		return err
+	}
+	claudeP, codexP := *claudePath, *codexPath
+	if claudeP == "" {
+		claudeP, _ = exec.LookPath("claude")
+	}
+	if codexP == "" {
+		codexP, _ = exec.LookPath("codex")
+	}
+	mgr := newLocalManager(ld)
+	res, err := mgr.bootstrap(*listen, claudeP, codexP)
+	if err != nil {
+		return err
+	}
+	if !*noService {
+		if err := installLocalServices(ld, localServerConfigPath(ld)); err != nil {
+			return err
+		}
+		waitListen(*listen, 5*time.Second)
+	}
+	if *asJSON {
+		return json.NewEncoder(os.Stdout).Encode(map[string]any{"base_url": res.BaseURL, "human_user": res.HumanUser, "human_password": res.HumanPassword, "password_shown": res.PasswordShown})
+	}
+	fmt.Printf("本地模式环境已就绪：%s\n控制台: %s（账号 %s）\n", shq(ld), res.BaseURL, res.HumanUser)
+	if res.PasswordShown {
+		fmt.Printf("初始密码: %s（已存到 %s）\n", res.HumanPassword, shq(filepath.Join(ld, "human.txt")))
 	}
 	return nil
 }

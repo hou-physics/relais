@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
@@ -177,5 +178,49 @@ func TestLocalInitQuotesPaths(t *testing.T) {
 		if !strings.Contains(string(out), want) {
 			t.Fatalf("输出里的路径应加引号 %q:\n%s", want, out)
 		}
+	}
+}
+
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+	old := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+	fn()
+	w.Close()
+	os.Stdout = old
+	data, _ := io.ReadAll(r)
+	return string(data)
+}
+
+func TestLocalBootstrapCommandJSON(t *testing.T) {
+	ld := t.TempDir()
+	t.Setenv("RELAIS_LOCAL_DIR", ld)
+	out := captureStdout(t, func() {
+		if err := RunLocal([]string{"bootstrap", "--claude", "/bin/echo", "--codex", "/bin/cat", "--listen", "127.0.0.1:18098", "--no-service", "--json"}); err != nil {
+			t.Fatal(err)
+		}
+	})
+	var res struct {
+		BaseURL       string `json:"base_url"`
+		HumanUser     string `json:"human_user"`
+		HumanPassword string `json:"human_password"`
+		PasswordShown bool   `json:"password_shown"`
+	}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &res); err != nil || res.BaseURL != "http://127.0.0.1:18098" || res.HumanUser != "hou" || !res.PasswordShown || res.HumanPassword == "" {
+		t.Fatalf("bootstrap --json 输出错: %q %v", out, err)
+	}
+	if _, err := os.Stat(filepath.Join(ld, "sides", "codex", "hooks", "auto-reply.sh")); err != nil {
+		t.Fatal("bootstrap 应生成两侧 hook")
+	}
+	// 第二次：password_shown=false，不建模块
+	out = captureStdout(t, func() {
+		RunLocal([]string{"bootstrap", "--claude", "/bin/echo", "--codex", "/bin/cat", "--listen", "127.0.0.1:18098", "--no-service", "--json"})
+	})
+	if !strings.Contains(out, `"password_shown":false`) {
+		t.Fatalf("第二次不应再显示密码: %q", out)
+	}
+	if err := RunLocal([]string{"bootstrap", "--claude", "/bin/echo", "--codex", "/nonexistent", "--no-service"}); err == nil || !strings.Contains(err.Error(), "codex") {
+		t.Fatalf("codex 路径无效应报错: %v", err)
 	}
 }
