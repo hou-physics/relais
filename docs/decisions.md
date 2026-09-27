@@ -10,6 +10,7 @@
 - **问题**：spec §3.2 说把本地逻辑抽成 `internal/local` 包供 CLI 与服务器共用；`internal/cli` 已依赖 `internal/server`（RunServe），server 再依赖 local、local 再用 cli 的 hook/配置助手会成环。
 - **考虑过**：把 hook 生成、两侧配置、项目初始化、plist 全搬进新包——被否：搬动量大、只为绕环。
 - **选择**：server 定义 `LocalManager` 接口（`internal/server/local.go`），`internal/cli/localmgr.go` 实现，`RunServe` 在 `server.toml` 有 `local_dir` 时注入。共用逻辑仍只有一份。另：网页开题以本人身份发信、信首行 `@<side> 先回` 由接话规则识别（spec §6）；bridge 心跳只存服务器内存，20 秒内有心跳算在跑。
+- **补充（M8 终审修复）**：① Claude Code 读 `CLAUDE.md`、Codex 读 `AGENTS.md`，都不读 `relais/AGENT.md`，口头指令原本到不了工作脑：`CreateModule` 在项目根的 `CLAUDE.md`/`AGENTS.md` 末尾写一个指针块（`<!-- relais-local -->` 标记、幂等、只追加、文件不存在就新建、不改其它内容），指向 `relais/AGENT.md` 的本地模式各节；本地模块的 `relais/AGENT.md` 不含联网说明（`relais draft`/先给雇主过目与本地流程矛盾）：新建时或文件仍以联网标题开头时换成本地开头，保留已有各模块段；② 升级：launchd plist 的程序路径不是当前二进制时重装（安装位置变了，如 Intel Mac 的 `/usr/local/bin`），安装脚本依次取 `/opt/homebrew/bin`、`/usr/local/bin`、`~/bin` 中第一个可写的；③ 仓库扫描不进 桌面/文稿/下载（TCC 保护，launchd 下会弹窗或静默拒绝），手填路径仍可用，被拒时给出去系统设置授权的提示；④ 心跳只在本地侧（显式 `RELAIS_CONFIG_DIR`）发，服务器回 404/405 后该客户端永久停发——联网 bridge 不再每轮打 relais-ai.com；⑤ `server.toml` 有 `local_dir` 却监听非回环地址时 `serve` 拒绝启动。
 - **状态**：live（v0.6.0-m8）。
 - **反转触发**：若第三个消费者（如 M9 密封轮）也要这套逻辑且不在 cli 包 → 届时再抽包。
 
