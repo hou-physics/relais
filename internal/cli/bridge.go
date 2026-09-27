@@ -122,6 +122,23 @@ func loadBridgeTargets() ([]bridgeTarget, error) {
 	return targets, nil
 }
 
+// bridgeStartTargets：bridge 启动时的照看目标。登记表为空时退回当前目录的项目；
+// 仍没有时，显式指定了身份目录（RELAIS_CONFIG_DIR，本地模式两侧 bridge 都是）则返回空表、进循环等登记表，
+// 否则报错提示 relais init——本地模式 bootstrap 后 bridge 先于任何模块启动（M8 冒烟）。
+func bridgeStartTargets() ([]bridgeTarget, error) {
+	targets, err := loadBridgeTargets()
+	if err != nil || len(targets) > 0 {
+		return targets, err
+	}
+	if root, proj, err := findProject(); err == nil {
+		return []bridgeTarget{{Channel: proj.Channel, Dir: root}}, nil
+	}
+	if os.Getenv("RELAIS_CONFIG_DIR") != "" {
+		return nil, nil
+	}
+	return nil, fmt.Errorf("没有已注册的项目：请先在项目目录里 relais init <频道名>")
+}
+
 func RunBridge(args []string) error {
 	fs := flag.NewFlagSet("bridge", flag.ContinueOnError)
 	interval := fs.Int("interval", 15, "轮询间隔（秒）")
@@ -133,18 +150,14 @@ func RunBridge(args []string) error {
 	if err != nil {
 		return err
 	}
-	targets, err := loadBridgeTargets()
+	targets, err := bridgeStartTargets()
 	if err != nil {
 		return err
 	}
-	if len(targets) == 0 {
-		root, proj, err := findProject()
-		if err != nil {
-			return fmt.Errorf("没有已注册的项目：请先在项目目录里 relais init <频道名>")
-		}
-		targets = append(targets, bridgeTarget{Channel: proj.Channel, Dir: root})
-	}
 	fmt.Printf("relais bridge 已启动，照看 %d 个项目（间隔 %d 秒，Ctrl+C 退出）：\n", len(targets), *interval)
+	if len(targets) == 0 {
+		fmt.Println("  （尚无模块：每轮重读登记表，等控制台新建模块）")
+	}
 	for _, tgt := range targets {
 		fmt.Printf("  %s → %s\n", tgt.Channel, tgt.Dir)
 	}

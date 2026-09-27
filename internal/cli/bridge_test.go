@@ -238,3 +238,18 @@ func TestPollOnceRoutesKickoffToConclusions(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// M8 冒烟发现：本地模式 bootstrap 后两侧 bridge 先于任何模块启动，登记表为空时不得退出，要等控制台新建模块。
+func TestBridgeStartTargetsWaitsForLocalSide(t *testing.T) {
+	t.Chdir(t.TempDir()) // 非项目目录
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("RELAIS_CONFIG_DIR", t.TempDir()) // 本地模式一侧：显式身份目录、登记表为空
+	targets, err := bridgeStartTargets()
+	if err != nil || len(targets) != 0 {
+		t.Fatalf("本地侧登记表为空时应等待而非报错: %v %v", targets, err)
+	}
+	t.Setenv("RELAIS_CONFIG_DIR", "") // 普通用户在非项目目录跑 bridge：仍报错提示 relais init
+	if _, err := bridgeStartTargets(); err == nil || !strings.Contains(err.Error(), "relais init") {
+		t.Fatalf("普通用户无项目时应报错: %v", err)
+	}
+}
