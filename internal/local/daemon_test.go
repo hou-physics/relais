@@ -280,6 +280,7 @@ func TestDaemonIngestReplaySkipsTurnCountAndDedups(t *testing.T) {
 	if _, err := os.Stat(outPath); !os.IsNotExist(err) {
 		t.Fatal("首次入库成功应清空 outbox 文件")
 	}
+	notesBefore := len(f.notes)
 	// 手工重建同名 outbox 文件，模拟"上一轮某个后续步骤失败、文件没被删"的场景
 	if err := os.WriteFile(outPath, raw, 0o644); err != nil {
 		t.Fatal(err)
@@ -290,6 +291,11 @@ func TestDaemonIngestReplaySkipsTurnCountAndDedups(t *testing.T) {
 	}
 	if _, err := os.Stat(outPath); !os.IsNotExist(err) {
 		t.Fatal("重放处理完也该清空 outbox 文件")
+	}
+	// 修复轮 2：重放不该再产生任何新通知（needs-human/OwnerConflict/回合上限都一样，
+	// 跟 CountLocalTurn 共用 !replay 这套门）。
+	if len(f.notes) != notesBefore {
+		t.Fatalf("重放不该产生新通知: 之前 %d 条，之后 %d 条: %v", notesBefore, len(f.notes), f.notes)
 	}
 	msgs, err := f.st.ListAfterSeq(f.chID, 0)
 	if err != nil {
@@ -350,6 +356,38 @@ func TestDaemonSkipsCodexWhenNotAddressed(t *testing.T) {
 	}
 	if string(after) != string(before) {
 		t.Fatalf("未指名 codex 的信不该投给 codex: %q -> %q", before, after)
+	}
+}
+
+// 修复轮 2 Important：Redeliver 挑投递目标要跟 deliver() 用同一条 to 规则，不能再按
+// From != "codex" 挑——那样会把雇主只写给 claude 的悄悄话也当成该重投给 codex 的目标。
+func TestDaemonRedeliverRespectsAddressing(t *testing.T) {
+	f := newFixture(t)
+	WriteAttach(f.md, Attach{ThreadID: "t-1", At: time.Now()})
+	f.post(t, "claude", "第一封\n", PostOpts{})
+	f.d.RunOnce() // 001-claude.md 自动投给 codex 一次
+	users := f.d.Users
+	f.st.SaveMessage(f.chID, users["hou"], []int64{users["claude"]}, "仅抄送 claude", "私下说一句\n", "")
+	f.d.RunOnce() // 归档 002-hou.md，但 to=[claude]，deliver() 不该投给 codex
+	if _, err := os.Stat(filepath.Join(f.md, "002-hou.md")); err != nil {
+		t.Fatal("应归档 002-hou.md")
+	}
+	before, err := os.ReadFile(f.codex)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.d.Redeliver(f.chID); err != nil {
+		t.Fatal(err)
+	}
+	after, err := os.ReadFile(f.codex)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(string(after), "002-hou.md") != 0 {
+		t.Fatalf("不该把只写给 claude 的悄悄话重投给 codex: %q", after)
+	}
+	if strings.Count(string(after), "001-claude.md") != strings.Count(string(before), "001-claude.md")+1 {
+		t.Fatalf("Redeliver 应该重投更早的、指名 codex 的那封 001-claude.md: before=%q after=%q", before, after)
 	}
 }
 

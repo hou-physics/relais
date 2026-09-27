@@ -155,7 +155,7 @@ func (d *Daemon) rejectOutbox(m ModuleRef, path, reason string) error {
 	}
 	_ = os.Rename(path, path+".rejected")
 	_ = os.WriteFile(path+".rejected.txt", []byte(reason+"\n"), 0o644)
-	d.notify("Relais · "+m.Name, "outbox 里有一封信读不了："+reason)
+	d.notify("Relais · "+m.Name, "outbox 里有一封信没法发出（已改名 .rejected）："+reason)
 	return nil
 }
 
@@ -182,9 +182,10 @@ func (d *Daemon) ingestOne(m ModuleRef, md string, it OutboxItem) error {
 	}
 
 	// replay：这个 IdemKey 在之前某一轮已经落过库——说明上一轮 SaveMessageOpts 之后的
-	// 某个步骤失败了，文件才没被删掉留到这一轮重试。重放时后续副作用大多是幂等的
-	// （ClearKickedOff/EvaluateHandshake/GetMessage 都是），但 CountLocalTurn 会重复
-	// 计回合，必须跳过（修复轮 1 F2）。
+	// 某个步骤失败了，文件才没被删掉留到这一轮重试。EvaluateHandshake/Kickoff/GetMessage
+	// 本身是幂等的，重放时照跑没问题；但会重复产生用户可见效果的都要跳过：计回合
+	// （修复轮 1 F2）、needs-human/OwnerConflict 的重复通知、重复 SSE Publish、
+	// 以及默认分支的 ClearKickedOff（修复轮 2，同一个 !replay 模式）。
 	replay, err := d.Store.SentKeyExists(m.ChannelID, opts.IdemKey)
 	if err != nil {
 		return err
@@ -198,7 +199,9 @@ func (d *Daemon) ingestOne(m ModuleRef, md string, it OutboxItem) error {
 	switch it.Kind {
 	case "needs-human":
 		_ = d.Store.SetNeedsHuman(m.ChannelID, it.Summary)
-		d.notify("Relais · "+m.Name, it.From+" 需要你定夺："+it.Summary)
+		if !replay {
+			d.notify("Relais · "+m.Name, it.From+" 需要你定夺："+it.Summary)
+		}
 	case "resolved":
 		res, err := d.Store.EvaluateHandshake(m.ChannelID, msg.ID)
 		if err != nil {
@@ -206,7 +209,9 @@ func (d *Daemon) ingestOne(m ModuleRef, md string, it OutboxItem) error {
 		}
 		switch res {
 		case store.HandshakeOwnerConflict:
-			d.notify("Relais · "+m.Name, "两侧提名的承接方不一致，请到控制台定")
+			if !replay {
+				d.notify("Relais · "+m.Name, "两侧提名的承接方不一致，请到控制台定")
+			}
 		case store.HandshakeDone:
 			if a, err := d.Store.GetAuto(m.ChannelID); err == nil && a.Mode == "autopilot" {
 				k, err := d.Store.Kickoff(m.ChannelID, d.Users["hou"])
@@ -229,14 +234,14 @@ func (d *Daemon) ingestOne(m ModuleRef, md string, it OutboxItem) error {
 			}
 		}
 	default:
-		_ = d.Store.ClearKickedOff(m.ChannelID)
 		if !replay {
+			_ = d.Store.ClearKickedOff(m.ChannelID)
 			if hit, _ := d.Store.CountLocalTurn(m.ChannelID); hit {
 				d.notify("Relais · "+m.Name, "回合到上限了，去控制台决定继续还是收")
 			}
 		}
 	}
-	if d.Publish != nil {
+	if !replay && d.Publish != nil {
 		d.Publish(m.ChannelID, msg, m.Name)
 	}
 	// 文件删除放最后：前面任何一步出错都会提前 return，把文件留下，下一轮重试
@@ -429,8 +434,11 @@ func (d *Daemon) Redeliver(channelID int64) error {
 		if err != nil {
 			return err
 		}
+		// 挑投递目标的规则跟 deliver() 保持一致（修复轮 2）：只挑 to 里点了名 codex 的信，
+		// kickoff 例外一律算在内；不能再按 From != "codex" 挑，那样会把雇主只写给 claude
+		// 的悄悄话也当成该投给 codex 的目标。
 		for i := len(ls) - 1; i >= 0; i-- {
-			if ls[i].From != "codex" {
+			if ls[i].Kind == "kickoff" || slices.Contains(ls[i].To, "codex") {
 				return d.deliverCodex(m, md, ls[i])
 			}
 		}
