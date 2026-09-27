@@ -32,7 +32,7 @@ const I18N = {
     modules: "模块", newModule: "新建模块", moduleName: "模块名", moduleDir: "项目文件夹", customDir: "手填路径…", create: "创建",
     rules: "编辑规矩", saveRules: "保存规矩", closeModule: "关闭", closeConfirm: "关闭模块 {n}？讨论会停止，数据保留。",
     localSettings: "设置", claudePath: "claude 路径", codexPath: "codex 路径", defaultMode: "新模块默认模式", hookRewritten: "已保存，两侧 hook 已重写",
-    bridgeAlive: "在跑", bridgeDead: "没在跑", conclusionsCount: "{n} 份结论",
+    bridgeAlive: "在跑", bridgeDead: "没在跑", bridgeLabel: "{s} 侧 bridge", conclusionsCount: "{n} 份结论",
     openTopic: "开题", topicPh: "写下要让两个 AI 讨论的议题……", firstResponder: "先由谁回应", sendTopic: "开题",
     copyKickoff: "复制开工指令", kickoffCopied: "已复制，贴给承接方的工作脑即可", onboarding: "还没有模块：先去「模块」页新建一个。",
     stateRunning: "运行中", statePaused: "已暂停", stateNeedsHuman: "等你回答", stateResolved: "已握手待确认", stateKickedOff: "已开工", stateClosed: "已关闭",
@@ -66,7 +66,7 @@ const I18N = {
     modules: "Modules", newModule: "New module", moduleName: "Module name", moduleDir: "Project folder", customDir: "Type a path…", create: "Create",
     rules: "Edit rules", saveRules: "Save rules", closeModule: "Close", closeConfirm: "Close module {n}? Discussion stops, data is kept.",
     localSettings: "Settings", claudePath: "claude path", codexPath: "codex path", defaultMode: "New module default mode", hookRewritten: "Saved — both sides' hooks were rewritten",
-    bridgeAlive: "running", bridgeDead: "not running", conclusionsCount: "{n} conclusions",
+    bridgeAlive: "running", bridgeDead: "not running", bridgeLabel: "{s} bridge", conclusionsCount: "{n} conclusions",
     openTopic: "Open topic", topicPh: "Write the topic you want the two AIs to discuss…", firstResponder: "Who answers first", sendTopic: "Open topic",
     copyKickoff: "Copy kickoff instruction", kickoffCopied: "Copied — paste it into the receiving agent's work session", onboarding: "No modules yet: go to the Modules page to create one.",
     stateRunning: "Running", statePaused: "Paused", stateNeedsHuman: "Needs your answer", stateResolved: "Resolved, awaiting you", stateKickedOff: "Kicked off", stateClosed: "Closed",
@@ -100,7 +100,7 @@ const I18N = {
     modules: "Module", newModule: "Neues Modul", moduleName: "Modulname", moduleDir: "Projektordner", customDir: "Pfad eingeben…", create: "Erstellen",
     rules: "Regeln bearbeiten", saveRules: "Regeln speichern", closeModule: "Schließen", closeConfirm: "Modul {n} schließen? Die Diskussion stoppt, Daten bleiben erhalten.",
     localSettings: "Einstellungen", claudePath: "claude-Pfad", codexPath: "codex-Pfad", defaultMode: "Standardmodus für neue Module", hookRewritten: "Gespeichert — Hooks auf beiden Seiten wurden neu geschrieben",
-    bridgeAlive: "läuft", bridgeDead: "läuft nicht", conclusionsCount: "{n} Fazits",
+    bridgeAlive: "läuft", bridgeDead: "läuft nicht", bridgeLabel: "{s}-Bridge", conclusionsCount: "{n} Fazits",
     openTopic: "Thema eröffnen", topicPh: "Schreib das Thema, das die beiden KIs diskutieren sollen…", firstResponder: "Wer antwortet zuerst", sendTopic: "Thema eröffnen",
     copyKickoff: "Start-Anweisung kopieren", kickoffCopied: "Kopiert — in die Arbeitssitzung der übernehmenden Seite einfügen", onboarding: "Noch keine Module: auf der Modul-Seite eins anlegen.",
     stateRunning: "Läuft", statePaused: "Pausiert", stateNeedsHuman: "Braucht deine Antwort", stateResolved: "Einigung erreicht, wartet auf dich", stateKickedOff: "Gestartet", stateClosed: "Geschlossen",
@@ -231,8 +231,10 @@ async function boot() {
     btn.append(avatarNode(me.username, me.display_name, me.avatar));
     $("menu-name").textContent = me.display_name + "（" + me.username + "）";
     $("menu-admin").hidden = !me.is_admin;
-    await loadChannels();
+    // 先探完本地模式再拉频道：拉频道内部会不等待地触发 openChannel（其末尾会调用自主对话状态刷新），
+    // 若本地模式探测排在后面，isLocal 可能在竞态里还没就绪，开题框会晚一拍才出现
     await detectLocal();
+    await loadChannels();
   } catch {
     $("login-view").hidden = false;
     $("main-view").hidden = true;
@@ -356,7 +358,7 @@ async function loadAutoState() {
   const bar = $("auto-bar");
   let st;
   try { st = await api("/api/channels/" + encodeURIComponent(channel) + "/auto"); }
-  catch { bar.hidden = true; return; }
+  catch { bar.hidden = true; $("open-topic").hidden = true; return; }
   bar.hidden = false;
   const on = !!st.enabled;
   if (on) $("auto-cap").value = st.round_cap;
@@ -486,10 +488,8 @@ function renderMsg(m) {
     // 复制开工指令：结论文件按 kickoff 消息的 id 落盘，开工前 conclusion 卡片对应的文件还不存在，只在 kickoff 卡片显示
     if (m.kind === "kickoff") {
       const copyK = document.createElement("button"); copyK.className = "toggle"; copyK.textContent = t("copyKickoff");
-      copyK.onclick = async () => {
-        await navigator.clipboard.writeText("读 relais/conclusions/" + channel + "-" + m.id + ".md，按结论开工");
-        copyK.textContent = t("kickoffCopied"); setTimeout(() => { copyK.textContent = t("copyKickoff"); }, 2000);
-      };
+      // 复用既有的 copyText：剪贴板失败时和其它复制按钮一样给出可见提示，而不是静默失败
+      copyK.onclick = () => copyText(copyK, "读 relais/conclusions/" + channel + "-" + m.id + ".md，按结论开工");
       div.append(copyK);
     }
   }
@@ -641,8 +641,9 @@ async function detectLocal() {
   try { const mods = await api("/api/local/modules"); isLocal = true; $("onboarding").hidden = mods.length > 0; }
   catch { isLocal = false; $("onboarding").hidden = true; }
   $("menu-modules").hidden = !isLocal;
+  if (channel) loadAutoState(); // 频道已在探测本地模式之前打开时，让开题框立即反映 isLocal 的最新结果
 }
-$("menu-modules").addEventListener("click", () => { loadModules(); showView("modules"); });
+$("menu-modules").addEventListener("click", () => { humanAction(loadModules); showView("modules"); });
 $("modules-back").addEventListener("click", () => showView("chat"));
 
 function stateLabel(s) { return t({ running: "stateRunning", paused: "statePaused", needs_human: "stateNeedsHuman", resolved: "stateResolved", kicked_off: "stateKickedOff", closed: "stateClosed" }[s] || "stateRunning"); }
@@ -666,12 +667,13 @@ function renderModule(mod) {
   const name = document.createElement("strong"); name.textContent = mod.name;
   const dir = document.createElement("span"); dir.className = "muted"; dir.textContent = mod.dir;
   const state = document.createElement("span"); state.className = mod.state === "needs_human" ? "err" : "muted";
-  state.textContent = stateLabel(mod.state) + " · " + mod.round + "/" + mod.round_cap + " · " + mod.mode + " · " + t("conclusionsCount").replace("{n}", mod.conclusions);
+  const modeLabel = t(mod.mode === "autopilot" ? "modeAutopilot" : "modeSupervised");
+  state.textContent = stateLabel(mod.state) + " · " + mod.round + "/" + mod.round_cap + " · " + modeLabel + " · " + t("conclusionsCount").replace("{n}", mod.conclusions);
   head.append(name, dir, state);
   const beats = document.createElement("div"); beats.className = "muted";
   for (const side of ["claude", "codex"]) {
     const dot = document.createElement("span"); dot.className = "dot " + (mod.bridge_alive && mod.bridge_alive[side] ? "ok" : "dead");
-    const lbl = document.createElement("span"); lbl.textContent = side + " bridge " + (mod.bridge_alive && mod.bridge_alive[side] ? t("bridgeAlive") : t("bridgeDead")) + " ";
+    const lbl = document.createElement("span"); lbl.textContent = t("bridgeLabel").replace("{s}", side) + " " + (mod.bridge_alive && mod.bridge_alive[side] ? t("bridgeAlive") : t("bridgeDead")) + " ";
     beats.append(dot, lbl);
   }
   const actions = document.createElement("div"); actions.className = "actions";

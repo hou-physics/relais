@@ -213,4 +213,22 @@ func TestWebHasConsoleControls(t *testing.T) {
 	if strings.Contains(string(js), ".innerHTML = m.") || strings.Contains(string(js), ".innerHTML = mod.") || strings.Contains(string(js), ".innerHTML = r.") {
 		t.Fatal("动态数据不得拼 innerHTML")
 	}
+	if strings.Count(string(js), "bridgeLabel"+":") < 3 {
+		t.Fatal("app.js 三语文案缺 bridgeLabel")
+	}
+	// 初始加载竞态：boot() 里必须先 detectLocal() 再 loadChannels()，否则 isLocal 可能在
+	// loadChannels() 内部触发的 openChannel()（末尾调 loadAutoState()）跑完之前还没就绪，
+	// 开题框会晚一拍才出现。
+	bi := strings.Index(string(js), "async function boot")
+	if bi < 0 {
+		t.Fatal("app.js 缺 async function boot")
+	}
+	bootBody := string(js)[bi:]
+	if end := strings.Index(bootBody, "\nfunction updateNotifyBtn"); end > 0 {
+		bootBody = bootBody[:end]
+	}
+	di, li := strings.Index(bootBody, "detectLocal()"), strings.Index(bootBody, "loadChannels()")
+	if di < 0 || li < 0 || di > li {
+		t.Fatalf("boot() 须先调 detectLocal() 再调 loadChannels()（detectLocal@%d loadChannels@%d）", di, li)
+	}
 }
