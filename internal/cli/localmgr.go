@@ -380,7 +380,12 @@ func (m *localManager) CreateModule(req api.LocalModuleRequest) (api.LocalModule
 	defer release()
 	if lm, err := st.LocalModuleByName(name); err == nil && lm.Dir != dir {
 		return out, invalid("模块 %q 已绑定目录 %s，不能改绑；请删除后重建或换个名字", name, lm.Dir)
-	} else if err != nil && !errors.Is(err, sql.ErrNoRows) {
+	} else if errors.Is(err, sql.ErrNoRows) {
+		// 未登记却已有归档信（删模块时保留了文件）：新频道从 seq 1 重来会覆盖旧信，拒绝
+		if ls, _ := local.ListLetters(local.MailDir(dir, name)); len(ls) > 0 {
+			return out, invalid("目录里已有模块 %q 的旧信件（relais/mail/%s/）；请先把该目录改名或删掉，再新建", name, name)
+		}
+	} else if err != nil {
 		return out, err
 	}
 	users, err := usersIn(st)
@@ -468,7 +473,10 @@ func (m *localManager) moduleInfo(st *store.Store, lm store.LocalModule) (api.Lo
 	out := api.LocalModule{Name: lm.Name, Dir: lm.Dir, Mode: a.Mode, Round: store.Round(a.RoundCount), RoundCap: store.Round(a.Cap),
 		NeedsHumanQ: a.NeedsHumanQ, Closed: lm.ClosedAt != "" || a.Closed}
 
-	letters, _ := local.ListLetters(md) // 目录不在（项目被挪走）时按空信箱显示
+	letters, err := local.ListLetters(md)
+	if err != nil && !os.IsNotExist(err) { // 目录不在（项目被挪走）时按空信箱显示；其它错误如实报
+		return api.LocalModule{}, fmt.Errorf("读模块 %q 的信箱失败: %w", lm.Name, err)
+	}
 	var last *local.Letter
 	for i := len(letters) - 1; i >= 0; i-- {
 		if letters[i].Kind != "kickoff" {
@@ -698,6 +706,18 @@ func (m *localManager) DeleteModule(name string, files bool) error {
 		rel, err := filepath.Rel(root, md)
 		if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || strings.ContainsRune(rel, filepath.Separator) {
 			return invalid("信箱路径 %s 不在 %s 下，拒绝删除", md, root)
+		}
+		// relais/mail（或 relais）若是指向项目外的符号链接，RemoveAll 会删到项目外：解析后再核对
+		if realRoot, err := filepath.EvalSymlinks(root); err == nil {
+			realDir, err := filepath.EvalSymlinks(lm.Dir)
+			if err != nil {
+				return err
+			}
+			if r, err := filepath.Rel(realDir, realRoot); err != nil || r == ".." || strings.HasPrefix(r, ".."+string(filepath.Separator)) {
+				return invalid("信箱目录是符号链接，拒绝删除")
+			}
+		} else if !os.IsNotExist(err) {
+			return err
 		}
 	}
 	if err := st.DeleteChannel(lm.ChannelID); err != nil {

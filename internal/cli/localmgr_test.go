@@ -289,11 +289,33 @@ func TestCloseReopenDeleteModule(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(proj, "relais", "mail", "m")); err != nil {
 		t.Fatal("默认不删文件")
 	}
-	mgr.CreateModule(api.LocalModuleRequest{Name: "m", Dir: proj})
-	mgr.DeleteModule("m", true)
+	// 保留的信箱里有归档信：同名重建会从 seq 1 覆盖旧信，必须拒绝
+	letter := filepath.Join(proj, "relais", "mail", "m", "001-hou.md")
+	os.WriteFile(letter, []byte("---\nseq: 1\nfrom: hou\nkind: letter\n---\n\n旧信"), 0o644)
+	if _, err := mgr.CreateModule(api.LocalModuleRequest{Name: "m", Dir: proj}); !errors.Is(err, server.ErrLocalInvalid) || !strings.Contains(err.Error(), "旧信件") {
+		t.Fatalf("有旧信件时同名重建应拒绝: %v", err)
+	}
+	if b, _ := os.ReadFile(letter); !strings.Contains(string(b), "旧信") {
+		t.Fatal("旧信不应被动")
+	}
+	os.Remove(letter) // 雇主清掉旧信后可重建
+	if _, err := mgr.CreateModule(api.LocalModuleRequest{Name: "m", Dir: proj}); err != nil {
+		t.Fatalf("清掉旧信后应可重建: %v", err)
+	}
+	os.WriteFile(letter, []byte("---\nseq: 1\nfrom: hou\nkind: letter\n---\n\n新信"), 0o644)
+	if _, err := mgr.CreateModule(api.LocalModuleRequest{Name: "m", Dir: proj}); err != nil {
+		t.Fatalf("已登记模块的重复创建仍应幂等: %v", err)
+	}
+	if err := mgr.DeleteModule("m", true); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := os.Stat(filepath.Join(proj, "relais", "mail", "m")); err == nil {
 		t.Fatal("files=1 应删信箱目录")
 	}
+	if _, err := mgr.CreateModule(api.LocalModuleRequest{Name: "m", Dir: proj}); err != nil {
+		t.Fatalf("连文件删除后应可重建: %v", err)
+	}
+	mgr.DeleteModule("m", true)
 	if _, err := os.Stat(filepath.Join(proj, "relais", "PROTOCOL.md")); err != nil {
 		t.Fatal("删模块不应删协议")
 	}
@@ -304,6 +326,43 @@ func TestCloseReopenDeleteModule(t *testing.T) {
 		if !errors.Is(err, server.ErrLocalInvalid) {
 			t.Fatalf("不存在的模块应 ErrLocalInvalid: %v", err)
 		}
+	}
+}
+
+func TestDeleteModuleRefusesSymlinkedMailRoot(t *testing.T) {
+	_, mgr := bootstrapped(t)
+	proj, outside := t.TempDir(), t.TempDir()
+	os.MkdirAll(filepath.Join(proj, "relais"), 0o755)
+	if err := os.Symlink(outside, filepath.Join(proj, "relais", "mail")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := mgr.CreateModule(api.LocalModuleRequest{Name: "m", Dir: proj}); err != nil {
+		t.Fatal(err)
+	}
+	if err := mgr.DeleteModule("m", true); !errors.Is(err, server.ErrLocalInvalid) || !strings.Contains(err.Error(), "符号链接") {
+		t.Fatalf("符号链接信箱应拒绝删除: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(outside, "m", "outbox")); err != nil {
+		t.Fatal("项目外的目标不应被动")
+	}
+	if mods, _ := mgr.ListModules(); len(mods) != 1 {
+		t.Fatal("拒绝删除时模块应仍在")
+	}
+}
+
+func TestModuleInfoReportsMailboxReadError(t *testing.T) {
+	_, mgr := bootstrapped(t)
+	proj := t.TempDir()
+	mgr.CreateModule(api.LocalModuleRequest{Name: "m", Dir: proj})
+	md := filepath.Join(proj, "relais", "mail", "m")
+	os.RemoveAll(md)
+	os.WriteFile(md, []byte("不是目录"), 0o644) // ReadDir 报 ENOTDIR，而非不存在
+	if _, err := mgr.ListModules(); err == nil {
+		t.Fatal("信箱读失败应报错而不是显示未接入")
+	}
+	os.Remove(md)
+	if mods, err := mgr.ListModules(); err != nil || mods[0].State != "未接入" {
+		t.Fatalf("信箱目录不在时按空信箱显示: %+v %v", mods, err)
 	}
 }
 
