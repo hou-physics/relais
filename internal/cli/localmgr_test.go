@@ -84,6 +84,8 @@ func TestScanRepos(t *testing.T) {
 	mk("work/deep/proj-c", true) // 第三层，不取
 	mk("plain", false)
 	mk(".hidden/proj-d", true) // 隐藏目录，不取
+	mk("Library/proj-x", true) // macOS 受 TCC 保护的目录，不进
+	mk("Music/proj-y", true)
 	os.Chtimes(filepath.Join(home, "proj-a"), time.Now().Add(-time.Hour), time.Now().Add(-time.Hour))
 	m, _ := newMgrForTest(t)
 	repos, err := m.ScanRepos()
@@ -135,6 +137,19 @@ func TestCreateListCloseModule(t *testing.T) {
 	if pc.Channel != "grammar" {
 		t.Fatalf("默认频道应仍是第一个模块: %+v", pc)
 	}
+	// 目录名含 ".." 字样但不是上级目录段：合法
+	dotted := filepath.Join(t.TempDir(), "foo..bar")
+	os.MkdirAll(dotted, 0o755)
+	if _, err := m.CreateModule("dotted", dotted); err != nil {
+		t.Fatalf("foo..bar 应被接受: %v", err)
+	}
+	// 已绑定的模块不能改绑到别的目录
+	if _, err := m.CreateModule("grammar", t.TempDir()); !errors.Is(err, server.ErrLocalInvalid) || !strings.Contains(err.Error(), "不能改绑") {
+		t.Fatalf("改绑目录应 ErrLocalInvalid: %v", err)
+	}
+	if err := m.CloseModule("dotted"); err != nil {
+		t.Fatal(err)
+	}
 	// 非法输入
 	for _, bad := range []struct{ name, dir string }{{"bad name", proj}, {"x", "/nonexistent/dir"}, {"x", proj + "/../" + filepath.Base(proj)}, {"x", "relative"}} {
 		_, err := m.CreateModule(bad.name, bad.dir)
@@ -144,15 +159,15 @@ func TestCreateListCloseModule(t *testing.T) {
 	}
 	// list
 	mods, err := m.ListModules()
-	if err != nil || len(mods) != 2 {
-		t.Fatalf("应列出 2 个模块: %v %v", mods, err)
+	if err != nil || len(mods) != 3 {
+		t.Fatalf("应列出 3 个模块（含已关闭的 dotted）: %v %v", mods, err)
 	}
 	// 结论计数
 	os.WriteFile(filepath.Join(proj, "relais", "conclusions", "grammar-01AAAAAAAAAAAAAAAAAAAAAAAA.md"), []byte("x"), 0o644)
 	os.WriteFile(filepath.Join(proj, "relais", "conclusions", "reader-01BBBBBBBBBBBBBBBBBBBBBBBB.md"), []byte("x"), 0o644)
 	mods, _ = m.ListModules()
 	for _, md := range mods {
-		if md.Conclusions != 1 {
+		if md.Name != "dotted" && md.Conclusions != 1 {
 			t.Fatalf("%s 结论数应为 1: %+v", md.Name, md)
 		}
 	}

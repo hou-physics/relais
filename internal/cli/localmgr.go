@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -183,6 +184,8 @@ func (m *localManager) ScanRepos() ([]api.LocalRepo, error) {
 		return nil, err
 	}
 	var out []api.LocalRepo
+	// macOS 受 TCC 保护或与代码无关的家目录顶层：不进，免得 launchd 下的 serve 触发隐私弹窗/静默拒绝
+	skipTop := map[string]bool{"Library": true, "Applications": true, "Movies": true, "Music": true, "Pictures": true, "Public": true}
 	var walk func(dir string, depth int)
 	walk = func(dir string, depth int) {
 		entries, err := os.ReadDir(dir)
@@ -190,7 +193,7 @@ func (m *localManager) ScanRepos() ([]api.LocalRepo, error) {
 			return
 		}
 		for _, e := range entries {
-			if !e.IsDir() || strings.HasPrefix(e.Name(), ".") {
+			if !e.IsDir() || strings.HasPrefix(e.Name(), ".") || (dir == home && skipTop[e.Name()]) {
 				continue
 			}
 			p := filepath.Join(dir, e.Name())
@@ -221,11 +224,14 @@ func (m *localManager) CreateModule(name, dir string) (api.LocalModule, error) {
 	if !validModuleName(name) {
 		return out, invalid("模块名 %q 不能为空、含空格或斜杠", name)
 	}
-	if !filepath.IsAbs(dir) || strings.Contains(dir, "..") {
+	if !filepath.IsAbs(dir) || filepath.Clean(dir) != dir || slices.Contains(strings.Split(dir, string(filepath.Separator)), "..") {
 		return out, invalid("目录必须是绝对路径且不含 ..")
 	}
 	if st, err := os.Stat(dir); err != nil || !st.IsDir() {
 		return out, invalid("目录 %q 不存在", dir)
+	}
+	if existing, err := m.moduleDir(name); err == nil && existing != dir {
+		return out, invalid("模块 %q 已绑定目录 %s，不能改绑；请关闭后用新名字创建", name, existing)
 	}
 	st, cfg, err := m.open()
 	if err != nil {

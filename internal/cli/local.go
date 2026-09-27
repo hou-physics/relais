@@ -9,8 +9,6 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
-
-	"github.com/hou-physics/relais/internal/store"
 )
 
 const localHuman = "hou"
@@ -54,15 +52,6 @@ func RunLocal(args []string) error {
 }
 
 func localServerConfigPath(ld string) string { return filepath.Join(ld, "server.toml") }
-
-func openLocalStore() (*store.Store, *ServerConfig, string, error) {
-	ld, err := localDir()
-	if err != nil {
-		return nil, nil, "", err
-	}
-	st, cfg, err := openServerStore(localServerConfigPath(ld))
-	return st, cfg, ld, err
-}
 
 func runLocalInit(args []string) error {
 	fs := flag.NewFlagSet("local init", flag.ContinueOnError)
