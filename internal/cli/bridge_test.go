@@ -92,9 +92,9 @@ func TestNotifyCommandHasNoContentInjection(t *testing.T) {
 	cmd := notifyCmd(from, summary)
 	title := "Relais · " + from
 
-	// For darwin and windows: verify payload does NOT leak into cmd.Args
-	// (command strings are never shell-interpolated, so injection is impossible)
-	if runtime.GOOS != "linux" {
+	// windows：payload 只经环境变量，不得出现在 cmd.Args
+	// （darwin 现在与 linux 一样把 title/summary 作为 argv 传给 osascript，不经 shell，见下）
+	if runtime.GOOS == "windows" {
 		for _, arg := range cmd.Args {
 			if strings.Contains(arg, from) || strings.Contains(arg, summary) ||
 				strings.Contains(arg, "$(id)") || strings.Contains(arg, "whoami") ||
@@ -104,8 +104,8 @@ func TestNotifyCommandHasNoContentInjection(t *testing.T) {
 		}
 	}
 
-	// For linux: verify exact title and summary ARE in cmd.Args (notify-send is safe)
-	if runtime.GOOS == "linux" {
+	// linux/darwin：title 与 summary 原样出现在 cmd.Args（notify-send / osascript argv 都不经 shell）
+	if runtime.GOOS == "linux" || runtime.GOOS == "darwin" {
 		foundTitle, foundSummary := false, false
 		for _, arg := range cmd.Args {
 			if arg == title {

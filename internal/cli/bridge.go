@@ -21,9 +21,13 @@ func notifyCmd(from, summary string) *exec.Cmd {
 	var cmd *exec.Cmd
 	switch runtime.GOOS {
 	case "darwin":
-		// AppleScript reads the env vars via `system attribute`
-		cmd = exec.Command("osascript", "-e",
-			`display notification (system attribute "RELAIS_NT_SUMMARY") with title (system attribute "RELAIS_NT_TITLE")`)
+		// 通过 argv 传给 AppleScript（on run argv）：不经 shell，注入安全；
+		// 不用 `system attribute` 读环境变量——它按 MacRoman 解码，中文摘要会成乱码。
+		cmd = exec.Command("osascript",
+			"-e", "on run argv",
+			"-e", "display notification (item 1 of argv) with title (item 2 of argv)",
+			"-e", "end run",
+			summary, title)
 	case "windows":
 		cmd = exec.Command("powershell", "-NoProfile", "-Command",
 			`[void][System.Reflection.Assembly]::LoadWithPartialName('System.Windows.Forms');`+
