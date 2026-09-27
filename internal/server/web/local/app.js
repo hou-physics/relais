@@ -50,14 +50,14 @@ async function loadModules() {
     const chipClass = m.state === "等你" ? "you" : (m.state === "讨论中" ? "ink" : "");
     el.innerHTML = `<div class="name">${esc(m.name)}</div>
       <div class="meta"><span class="chip ${chipClass}">${esc(m.state)}</span><span class="mono muted">${m.round}/${m.round_cap} · ${esc(ago(m.last_at)) || "无信"}</span></div>`;
-    el.onclick = () => select(m.name);
+    el.onclick = () => select(m.name).catch((e) => toast(e.message));
     list.appendChild(el);
   }
-  if (!current && modules.length) select(modules[0].name);
+  if (!current && modules.length) select(modules[0].name).catch((e) => toast(e.message));
   else if (current) {
     const fresh = modules.find((m) => m.name === current.name);
     if (fresh) { current = fresh; renderNow(); }
-    else { current = null; if (sse) { sse.close(); sse = null; } if (modules.length) select(modules[0].name); }
+    else { current = null; if (sse) { sse.close(); sse = null; } if (modules.length) select(modules[0].name).catch((e) => toast(e.message)); }
   }
 }
 
@@ -69,8 +69,12 @@ async function select(name) {
   document.querySelectorAll(".module").forEach((el) => el.classList.toggle("active", el.querySelector(".name").textContent === name));
   renderNow();
   await loadMessages();
+  if (!current || current.name !== name) return; // 等待期间又换了模块
   openSSE();
 }
+const sideLabel = { claude: "Claude", codex: "Codex" };
+// 被等的那一侧是否接上了：claude 看 waiting，codex 看 attached
+function sideConnected(m, side) { return side === "claude" ? m.claude.waiting : side === "codex" ? m.codex.attached : false; }
 function sideText(m) {
   const c = m.claude, x = m.codex;
   const claude = c.waiting ? `在等信${c.session_name ? " · 对话「" + esc(c.session_name) + "」" : ""} · 从 ${esc(new Date(c.wait_since).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" }))} 起`
@@ -85,15 +89,21 @@ function nowLine(m) {
   if (m.pending_conclusion) return m.pending_conclusion.awaiting_confirm ? `已握手，等你确认开工（承接方 ${m.pending_conclusion.owner}）` : `已握手，承接方 ${m.pending_conclusion.owner}`;
   if (m.needs_human_q) return "等你回答";
   if (m.last_seq === 0) return "还没有信。先在下面写第一封，或让任一侧开题。";
-  const who = { claude: "Claude", codex: "Codex", user: "你" }[m.waiting_for] || "";
   const from = { claude: "Claude", codex: "Codex", hou: "你" }[m.last_from] || m.last_from;
-  return `${who ? (m.waiting_for === "user" ? "等你" : "等 " + who + " 回信") : "空闲"} · 上封信来自 ${from} · ${ago(m.last_at)}`;
+  let head = "空闲";
+  if (m.waiting_for === "user") head = "等你";
+  else if (sideLabel[m.waiting_for]) {
+    const who = sideLabel[m.waiting_for];
+    head = sideConnected(m, m.waiting_for) ? `等 ${who} 回信` : `等 ${who} 回信，但 ${who} 侧还没接入`;
+  }
+  return `${head} · 上封信来自 ${from} · ${ago(m.last_at)}`;
 }
 function renderNow() {
   const m = current;
   $("now-line").textContent = nowLine(m);
   $("now-round").textContent = `第 ${m.round}/${m.round_cap} 回合 · ${m.mode === "autopilot" ? "甩手" : "监督"}`;
-  const busy = !m.closed && !m.needs_human_q && !m.pending_conclusion && (m.waiting_for === "claude" || m.waiting_for === "codex");
+  // 只有被等的那侧真接上了才算"进行中"，否则进度条是在说谎
+  const busy = !m.closed && !m.needs_human_q && !m.pending_conclusion && sideConnected(m, m.waiting_for);
   $("progress").hidden = !busy;
   const t = sideText(m);
   $("side-claude").innerHTML = t.claude;
@@ -123,13 +133,27 @@ function renderTodo(m) {
       <div class="row gap"><label class="small">先回 <select id="answer-first"><option value="">按接话规则</option><option value="claude">Claude</option><option value="codex">Codex</option></select></label>
       <button class="btn" data-act="answer">发送并继续</button><button class="btn ghost" data-act="resume">只继续，不回答</button></div></div>`);
   }
+  const hint = esc(attachHint(m.name));
+  const attachButtons = (side) => `<div class="row gap"><button class="btn ghost tiny" data-copy="${hint}">复制「${hint}」</button>${side === "codex" ? `<button class="btn ghost tiny" data-act="pick">从列表选</button>` : ""}</div>`;
+  const bothItem = !m.closed && !m.claude.waiting && !m.codex.attached && m.last_seq === 0;
+  let codexCovered = false;
   if (m.codex.delivery_error) {
-    items.push(`<div class="todo-item"><div><b>Codex 没收到信</b> · ${esc(m.codex.delivery_error)}</div><div><button class="btn" data-act="redeliver">重新投递</button></div></div>`);
+    if (m.codex.attached) {
+      items.push(`<div class="todo-item"><div><b>Codex 没收到信</b> · ${esc(m.codex.delivery_error)}</div><div><button class="btn" data-act="redeliver">重新投递</button></div></div>`);
+    } else if (!bothItem) {
+      // 没接入时重新投递没用：直接给接入办法
+      items.push(`<div class="todo-item"><div><b>Codex 没收到信</b> · ${esc(m.codex.delivery_error)}</div>${attachButtons("codex")}</div>`);
+      codexCovered = true;
+    }
+  }
+  const ws = m.waiting_for;
+  if (!m.closed && !bothItem && sideLabel[ws] && !sideConnected(m, ws) && !(ws === "codex" && codexCovered)) {
+    items.push(`<div class="todo-item"><div><b>接入 ${sideLabel[ws]} 对话</b> · 正在等 ${sideLabel[ws]} 回信，在 ${sideLabel[ws]} 对话里说一句：</div>${attachButtons(ws)}</div>`);
   }
   if (m.rejected && m.rejected.length) {
     items.push(`<div class="todo-item"><div><b>有信没法读</b> · outbox 里：${esc(m.rejected.join("、"))}（同名 .txt 里有原因）</div></div>`);
   }
-  if (!m.closed && !m.claude.waiting && !m.codex.attached && m.last_seq === 0) {
+  if (bothItem) {
     items.push(`<div class="todo-item"><div><b>接入两侧对话</b> · 在各自的对话里说一句：</div>
       <div class="row gap"><button class="btn ghost tiny" data-copy="${esc(attachHint(m.name))}">复制「${esc(attachHint(m.name))}」</button></div></div>`);
   }
@@ -140,6 +164,7 @@ function renderTodo(m) {
 async function act(name) {
   const n = encodeURIComponent(current.name);
   try {
+    if (name === "pick") return pickCodex();
     if (name === "kickoff") await api(`/api/channels/${n}/auto/kickoff`, { method: "POST" });
     if (name === "resume") await api(`/api/channels/${n}/auto/resume`, { method: "POST" });
     if (name === "redeliver") await api(`/api/local/modules/${n}/redeliver`, { method: "POST" });
@@ -163,7 +188,10 @@ async function sendLetter(text, first) {
 // ---------- 往来 ----------
 const kindLabel = { resolved: "收敛提议", conclusion: "结论", kickoff: "开工", "needs-human": "需要你" };
 async function loadMessages() {
-  messages = await api(`/api/channels/${encodeURIComponent(current.name)}/messages`);
+  const name = current.name;
+  const list = await api(`/api/channels/${encodeURIComponent(name)}/messages`);
+  if (!current || current.name !== name) return; // 过期的响应
+  messages = list;
   renderTimeline();
 }
 function renderTimeline() {
@@ -179,8 +207,10 @@ function renderTimeline() {
       <div class="summary">${esc(m.summary)}</div><div class="body" hidden></div>`;
     el.querySelector(".summary").onclick = async () => {
       const b = el.querySelector(".body");
-      if (b.hidden && !b.innerHTML) { const full = await api(`/api/messages/${m.id}`); b.innerHTML = md(full.body_md); }
-      b.hidden = !b.hidden;
+      try {
+        if (b.hidden && !b.innerHTML) { const full = await api(`/api/messages/${m.id}`); b.innerHTML = md(full.body_md); }
+        b.hidden = !b.hidden;
+      } catch (e) { toast(e.message); }
     };
     tl.appendChild(el);
   }
@@ -192,7 +222,7 @@ function openSSE() {
   sse.addEventListener("message", (ev) => {
     const m = JSON.parse(ev.data);
     if (!messages.some((x) => x.id === m.id)) { messages.push(m); renderTimeline(); }
-    loadModules();
+    loadModules().catch((e) => toast(e.message));
   });
 }
 
@@ -236,7 +266,8 @@ async function closeModule(reopen) {
 }
 async function deleteModule() {
   if (!confirm(`删除模块「${current.name}」的记录？项目里的信件文件默认保留。`)) return;
-  const files = confirm("同时删除项目里的 relais/mail/" + current.name + " 目录？（取消 = 保留文件）");
+  const typed = prompt("要连信件文件（relais/mail/" + current.name + "）一起删吗？输入模块名确认；留空或取消 = 只删记录、保留文件");
+  const files = typed !== null && typed.trim() === current.name;
   try {
     await api(`/api/local/modules/${encodeURIComponent(current.name)}${files ? "?files=1" : ""}`, { method: "DELETE" });
     current = null; if (sse) sse.close(); await loadModules();

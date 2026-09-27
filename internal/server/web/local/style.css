@@ -6,7 +6,7 @@
   --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px; --s6: 24px; --s8: 32px;
 }
 @media (prefers-color-scheme: dark) {
-  :root { --canvas: #010120; --ink: #ffffff; --line: #26264a; --muted: #a3a3b8; --mint: #c8f6f9; --mint-ink: #010120; }
+  :root { --canvas: #010120; --ink: #ffffff; --line: #26264a; --muted: #a3a3b8; --mint: #c8f6f9; --mint-ink: #010120; --danger: #ff8a80; }
 }
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
