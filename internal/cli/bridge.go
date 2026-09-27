@@ -50,7 +50,11 @@ func runHook(hook, msgPath, dir string, m api.Message) {
 		return
 	}
 	var cmd *exec.Cmd
-	if runtime.GOOS == "windows" {
+	if st, err := os.Stat(hook); err == nil && st.Mode().IsRegular() {
+		// hook 是一个存在的文件（本地模式生成的 auto-reply.sh，路径含 "Application Support" 的空格）：
+		// 直接 exec，不经 shell 拆词——否则 sh -c 会把路径在空格处截断（exit 127）。
+		cmd = exec.Command(hook)
+	} else if runtime.GOOS == "windows" {
 		cmd = exec.Command("cmd", "/C", hook)
 	} else {
 		cmd = exec.Command("sh", "-c", hook)

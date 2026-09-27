@@ -288,3 +288,26 @@ func TestBridgeStartTargetsWaitsForLocalSide(t *testing.T) {
 		t.Fatalf("普通用户无项目时应报错: %v", err)
 	}
 }
+
+// 真实安装路径 ~/Library/Application Support/... 含空格：hook 若经 sh -c 展开会被拆成两半（exit 127）。
+// hook 是一个存在的可执行文件时必须直接 exec，不经 shell 拆词。
+func TestRunHookPathWithSpaceExecutesDirectly(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "Application Support", "hooks")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(t.TempDir(), "ran")
+	hook := filepath.Join(dir, "auto-reply.sh")
+	os.WriteFile(hook, []byte("#!/bin/sh\necho \"$RELAIS_CHANNEL\" > \""+marker+"\"\n"), 0o755)
+	runHook(hook, "/p", t.TempDir(), api.Message{ID: "1", Channel: "m9", From: "x"})
+	data, err := os.ReadFile(marker)
+	if err != nil || strings.TrimSpace(string(data)) != "m9" {
+		t.Fatalf("含空格路径的 hook 应被直接执行: %v %q", err, data)
+	}
+	// 非文件的命令串仍走 shell（M3 行为：--hook 可以是一行命令）
+	marker2 := filepath.Join(t.TempDir(), "ran2")
+	runHook("echo hi > "+marker2, "/p", t.TempDir(), api.Message{ID: "1", Channel: "m9", From: "x"})
+	if _, err := os.Stat(marker2); err != nil {
+		t.Fatal("命令串形式的 hook 仍应经 shell 执行")
+	}
+}
