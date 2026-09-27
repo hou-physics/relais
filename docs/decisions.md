@@ -5,6 +5,14 @@
 
 ---
 
+## 2026-09-27 · D45 M9 接入现有对话：守卫 + 门铃 + 传输协议；本地控制台独立重做
+
+- **问题**：M7/M8 的无头讨论脑对 Hou 是黑盒：看不见讨论、插不了话、通知乱码后更不知所措。他要的是"讨论就发生在我开着的两个对话里，工具只搬信"。
+- **考虑过**：① 保留无头讨论脑、只把讨论镜像到网页——被否：仍不能在对话里介入；② 两侧都用门铃（对话里跑阻塞命令）——部分被否：实测 Codex 桌面版可被 `codex queue --thread` 直接塞消息，没必要让 Codex 跑门铃；③ 逆向 Claude Code 的会话 socket 做推送——被否：带 peer token 的私有协议，不可靠；④ agent 侧命令走 HTTP 发信——被否：Codex 沙箱默认禁网（含 127.0.0.1），Claude 沙箱也可能禁，改为只写项目目录里的文件、守卫扫 outbox；⑤ 在原联网网页上砍功能——被否：会碰 relais-ai.com 那套，本地控制台独立一套页面、共用底层 API。
+- **选择**：spec `docs/superpowers/specs/2026-09-27-relais-m9-attach-design.md`。① 常驻只剩 `relais serve`（本地模式内建投递循环：扫 `relais/mail/<模块>/outbox/` 入库 → 按 seq 归档为 `NNN-<from>.md` → Codex 侧 `codex queue`、Claude 侧由对话里后台运行的 `relais wait` 盯文件）；② agent 侧三条纯文件命令 `relais post/wait/attach`，不联网；③ `relais/PROTOCOL.md` 只讲传输（信封、去哪读、怎么发、三种标记、接入步骤、禁止事项），一句不提正文格式；④ 本地控制台独立页面、回环免钥匙（不带 Authorization 的回环请求 = hou）、只有中文、无账号层；⑤ 砍掉无头讨论脑与 hook、双 bridge 常驻、登录密码、`claude` 路径设置、规矩编辑、`AGENT.md` 本地段、开工指令复制；⑥ 本地频道取消在途拒绝与严格轮流（同侧连发照收），握手/回合/开工/needs-human 沿用 M7 服务器逻辑；⑦ 单人本机接受"任何本地进程都能以 hou 身份发言"。原 M9 拷问顺延为 M10。
+- **状态**：定稿待 Hou 审 spec。
+- **反转触发**：Claude Code 强杀长时间后台命令 → wait 改超时循环或换 hook 通知；Codex 升级改了 `queue`/`threads` 表 → Codex 侧退回门铃 + 控制台点选；出现第二个本机用户 → 恢复人钥匙。
+
 ## 2026-09-27 · D44 M8 执行期实现选择
 
 - **问题**：spec §3.2 说把本地逻辑抽成 `internal/local` 包供 CLI 与服务器共用；`internal/cli` 已依赖 `internal/server`（RunServe），server 再依赖 local、local 再用 cli 的 hook/配置助手会成环。
