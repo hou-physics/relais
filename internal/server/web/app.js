@@ -26,7 +26,7 @@ const I18N = {
     autoOff: "自主对话：未开启", autoEnable: "开启自主对话", autoDisable: "关闭自主对话", autoCap: "上限（来回数）",
     guidePrompt: "给你自己的 agent 一句私下引导（对方看不到）：",
     reopenReason: "继续讨论的理由（会发进频道，两侧都看到）：",
-    autoResolved: "✅ 已握手待确认：{s}（承接方 {o}）", autoKickedOff: "已开工（承接方 {o}）· 在工作脑里执行 relais conclusion {c}", autoClosed: "频道已关闭",
+    autoResolved: "✅ 已握手待确认：{s}（承接方 {o}）", autoKickedOff: "已开工（承接方 {o}）· 点开工卡片上的「复制开工指令」，贴给承接方的工作脑", autoClosed: "频道已关闭",
     kickoff: "确认开工", reopen: "继续讨论", modeSupervised: "监督：握手后我确认才开工", modeAutopilot: "甩手：握手即开工",
     conclusionTag: "结论", kickoffTag: "开工", answerPh: "回答（以你本人身份发进频道，两侧都看到）", answerSend: "回答并继续",
     modules: "模块", newModule: "新建模块", moduleName: "模块名", moduleDir: "项目文件夹", customDir: "手填路径…", create: "创建",
@@ -60,7 +60,7 @@ const I18N = {
     autoOff: "Auto-chat: off", autoEnable: "Enable auto-chat", autoDisable: "Disable", autoCap: "Round cap (exchanges)",
     guidePrompt: "Private guidance to your own agent (the other side won't see it):",
     reopenReason: "Why keep discussing? (posted to the channel, both sides see it):",
-    autoResolved: "✅ Handshake reached, awaiting you: {s} (owner {o})", autoKickedOff: "Kicked off (owner {o}) · run relais conclusion {c} in your work session", autoClosed: "Channel closed",
+    autoResolved: "✅ Handshake reached, awaiting you: {s} (owner {o})", autoKickedOff: "Kicked off (owner {o}) · click \"Copy kickoff instruction\" on the kickoff card and paste it into the owner's work session", autoClosed: "Channel closed",
     kickoff: "Confirm kickoff", reopen: "Keep discussing", modeSupervised: "Supervised: I confirm before kickoff", modeAutopilot: "Autopilot: kickoff on handshake",
     conclusionTag: "Conclusion", kickoffTag: "Kickoff", answerPh: "Answer (posted as you, both sides see it)", answerSend: "Answer & resume",
     modules: "Modules", newModule: "New module", moduleName: "Module name", moduleDir: "Project folder", customDir: "Type a path…", create: "Create",
@@ -94,7 +94,7 @@ const I18N = {
     autoOff: "Auto-Chat: aus", autoEnable: "Auto-Chat aktivieren", autoDisable: "Deaktivieren", autoCap: "Rundenlimit (Wechsel)",
     guidePrompt: "Private Anweisung an deinen Agent (die andere Seite sieht sie nicht):",
     reopenReason: "Warum weiter diskutieren? (wird im Kanal gepostet, beide Seiten sehen es):",
-    autoResolved: "✅ Einigung erreicht, wartet auf dich: {s} (Owner {o})", autoKickedOff: "Gestartet (Owner {o}) · relais conclusion {c} in deiner Arbeitssitzung", autoClosed: "Kanal geschlossen",
+    autoResolved: "✅ Einigung erreicht, wartet auf dich: {s} (Owner {o})", autoKickedOff: "Gestartet (Owner {o}) · auf der Start-Karte „Start-Anweisung kopieren“ klicken und in die Arbeitssitzung der übernehmenden Seite einfügen", autoClosed: "Kanal geschlossen",
     kickoff: "Start bestätigen", reopen: "Weiter diskutieren", modeSupervised: "Beaufsichtigt: ich bestätige vor dem Start", modeAutopilot: "Autopilot: Start bei Einigung",
     conclusionTag: "Fazit", kickoffTag: "Start", answerPh: "Antwort (als du selbst, beide Seiten sehen sie)", answerSend: "Antworten & fortsetzen",
     modules: "Module", newModule: "Neues Modul", moduleName: "Modulname", moduleDir: "Projektordner", customDir: "Pfad eingeben…", create: "Erstellen",
@@ -381,7 +381,7 @@ async function loadAutoState() {
   if (st.closed) { text = t("autoClosed"); }
   else if (st.resolved) { text = t("autoResolved").replace("{s}", st.resolution_summary || "").replace("{o}", st.owner || ""); cls = "ok"; }
   else if (st.needs_human_q) { text = "⚠️ " + t("autoNeedsYou") + " " + st.needs_human_q; cls = "err"; }
-  else if (st.kicked_off) { text = t("autoKickedOff").replace("{o}", st.owner || "").replace("{c}", channel); cls = "ok"; }
+  else if (st.kicked_off) { text = t("autoKickedOff").replace("{o}", st.owner || ""); cls = "ok"; }
   else if (st.paused) { text = t("autoPaused"); cls = "err"; }
   state.textContent = text;
   state.className = cls;
@@ -489,8 +489,11 @@ function renderMsg(m) {
     if (m.kind === "kickoff") {
       const copyK = document.createElement("button"); copyK.className = "toggle"; copyK.textContent = t("copyKickoff");
       // 复用既有的 copyText：剪贴板失败时和其它复制按钮一样给出可见提示，而不是静默失败
-      copyK.onclick = () => copyText(copyK, "读 relais/conclusions/" + channel + "-" + m.id + ".md，按结论开工");
-      div.append(copyK);
+      const kPath = "relais/conclusions/" + channel + "-" + m.id + ".md";
+      copyK.onclick = () => copyText(copyK, "读 " + kPath + "，按结论开工");
+      // 结论文件路径直接显示在按钮旁，剪贴板不可用时也能手抄
+      const pathEl = document.createElement("code"); pathEl.className = "kickoff-path"; pathEl.textContent = kPath;
+      div.append(copyK, pathEl);
     }
   }
   const head = document.createElement("div");

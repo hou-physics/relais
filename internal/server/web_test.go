@@ -112,9 +112,14 @@ func TestWebHasLocalModeControls(t *testing.T) {
 	if strings.Count(string(js), "humanAction(") < 8 {
 		t.Fatal("app.js 里人操作的按钮监听缺少 humanAction 包裹（应至少出现 8 次：定义 + 各按钮调用）")
 	}
-	// 开工提示须带频道名：多模块项目里裸 relais conclusion 会打印错的结论
-	if strings.Count(string(js), "relais conclusion {c}") < 3 || !strings.Contains(string(js), `.replace("{c}", channel)`) {
-		t.Fatal("autoKickedOff 三语文案须为 relais conclusion {c} 并替换为当前频道名")
+	// 开工提示指向开工卡片的复制按钮（按钮复制的指令带频道名与结论 id），不再让人手敲 CLI 命令；卡片旁显示结论文件路径
+	if strings.Contains(string(js), "relais conclusion {c}") || strings.Count(string(js), "autoKickedOff: ") != 3 ||
+		!strings.Contains(string(js), "复制开工指令」") || !strings.Contains(string(js), `"Copy kickoff instruction\" on the kickoff card`) ||
+		!strings.Contains(string(js), "Start-Anweisung kopieren“ klicken") {
+		t.Fatal("autoKickedOff 三语文案须指向开工卡片的复制按钮，而不是 relais conclusion 命令")
+	}
+	if !strings.Contains(string(js), `const kPath = "relais/conclusions/" + channel + "-" + m.id + ".md"`) || !strings.Contains(string(js), `pathEl.textContent = kPath`) {
+		t.Fatal("开工卡片须在复制按钮旁显示结论文件路径")
 	}
 	// needs-human 时"继续"须仍可见（联网频道的 M5 行为），只在 resolved 时隐藏
 	if strings.Contains(string(js), `st.resolved || !!st.needs_human_q`) {

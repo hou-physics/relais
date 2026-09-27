@@ -110,6 +110,7 @@ main { max-width: 720px; margin: 0 auto; padding: 20px 16px 0; display: flex; fl
 .msg.kickoff { border-left: 3px solid var(--accent); }
 .msg .kind-tag { display: inline-block; font-size: 11px; font-weight: 600; color: var(--ok); margin-bottom: 4px; }
 .msg.kickoff .kind-tag { color: var(--accent); }
+.msg .kickoff-path { margin-left: 8px; font-size: 12px; word-break: break-all; }
 #auto-answer-row { display: flex; gap: 6px; width: 100%; margin-top: 6px; }
 #auto-answer-row input { flex: 1; }
 #auto-mode { font-size: 12px; }
