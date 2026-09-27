@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/hou-physics/relais/internal/api"
+	"github.com/hou-physics/relais/internal/local"
 	"github.com/hou-physics/relais/internal/server"
 	"github.com/hou-physics/relais/internal/store"
 )
@@ -480,6 +481,7 @@ func TestMigrateProjectsToml(t *testing.T) {
 	}
 	u, _ := st.UserByName("hou")
 	st.SaveMessage(ch.ID, u.ID, nil, "旧信", "x", "")
+	seedHistoryWithKickoff(t, st, ch.ID) // 终审修复 #3：迁移前已有握手与 kickoff
 	st.Close()
 	os.MkdirAll(filepath.Join(ld, "sides", "claude"), 0o755)
 	registerProjectIn(filepath.Join(ld, "sides", "claude"), "old", proj)
@@ -490,10 +492,11 @@ func TestMigrateProjectsToml(t *testing.T) {
 	if len(mods) != 1 || mods[0].Name != "old" || mods[0].Dir != proj {
 		t.Fatalf("应导入旧登记: %+v", mods)
 	}
+	assertNoReplay(t, mgr, proj, "old")
 	st, _, _ = mgr.open()
 	defer st.Close()
 	lm, _ := st.LocalModuleByName("old")
-	if lm.ArchivedSeq != 1 {
+	if lm.ArchivedSeq != 4 {
 		t.Fatalf("旧信不重新归档，archived_seq 应为当前最大 seq: %d", lm.ArchivedSeq)
 	}
 	if _, err := os.Stat(filepath.Join(proj, "relais", "PROTOCOL.md")); err != nil {
@@ -545,4 +548,88 @@ func TestModuleInfoClaudeWorking(t *testing.T) {
 	if m := mods[0]; !m.Claude.Working || m.Claude.Waiting || m.Claude.Cursor != 2 || m.State != "讨论中" {
 		t.Fatalf("游标等于最后一封 codex 信应算正在回: %+v state=%s", m.Claude, m.State)
 	}
+}
+
+// seedHistoryWithKickoff：频道里写一封雇主给 codex 的信、一次 codex 提议 + claude 附和的握手、再开工。
+func seedHistoryWithKickoff(t *testing.T, st *store.Store, chID int64) {
+	t.Helper()
+	id := map[string]int64{}
+	for _, n := range []string{"claude", "codex", "hou"} {
+		u, err := st.UserByName(n)
+		if err != nil {
+			t.Fatal(err)
+		}
+		id[n] = u.ID
+	}
+	if _, err := st.SaveMessage(chID, id["hou"], []int64{id["codex"], id["claude"]}, "问", "@codex 先回\n\n问", ""); err != nil {
+		t.Fatal(err)
+	}
+	m1, err := st.SaveMessageOpts(chID, id["codex"], []int64{id["claude"], id["hou"]}, "提议", "提议", "", store.SaveOpts{Kind: "resolved", Owner: "codex"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m2, err := st.SaveMessageOpts(chID, id["claude"], []int64{id["codex"], id["hou"]}, "附和", "附和", "", store.SaveOpts{Kind: "resolved", Owner: "codex", AckOf: m1.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res, err := st.EvaluateHandshake(chID, m2.ID); err != nil || res != store.HandshakeDone {
+		t.Fatalf("握手: %v %v", res, err)
+	}
+	if _, err := st.Kickoff(chID, id["hou"]); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// assertNoReplay：给已登记模块接上 codex、起守卫跑一轮——旧 kickoff 不重写、旧信不补投。
+func assertNoReplay(t *testing.T, mgr *localManager, proj, name string) {
+	t.Helper()
+	logf := filepath.Join(t.TempDir(), "codex.log")
+	script := filepath.Join(t.TempDir(), "codex")
+	os.WriteFile(script, []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" >> \""+logf+"\"\n"), 0o755)
+	if err := mgr.PutSettings(api.LocalSettings{CodexPath: script, DefaultMode: "supervised", DefaultCap: 8}); err != nil {
+		t.Fatal(err)
+	}
+	md := filepath.Join(proj, "relais", "mail", name)
+	if err := local.WriteAttach(md, local.Attach{ThreadID: "t-1", At: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	d, err := mgr.newDaemon(func(int64, *store.Message, string) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { d.Store.Close(); mgr.shared, mgr.daemon = nil, nil }()
+	if err := d.RunOnce(); err != nil {
+		t.Fatal(err)
+	}
+	if ks, _ := filepath.Glob(filepath.Join(md, "kickoff-*.md")); len(ks) != 0 {
+		t.Fatalf("旧 kickoff 不该重新归档: %v", ks)
+	}
+	if data, err := os.ReadFile(logf); err == nil {
+		t.Fatalf("旧信不该补投给 codex: %q", data)
+	}
+}
+
+// 终审修复 #3：CreateModule 收编已有历史（含 kickoff）的频道，同样不重放。
+func TestCreateModuleAdoptsChannelWithoutReplay(t *testing.T) {
+	_, mgr := bootstrapped(t)
+	st, _, _ := mgr.open()
+	ch, _ := st.CreateChannel("legacy")
+	for _, n := range []string{"claude", "codex", "hou"} {
+		u, _ := st.UserByName(n)
+		st.AddMember(ch.ID, u.ID)
+	}
+	st.SetAutoEnabled(ch.ID, true, 16)
+	seedHistoryWithKickoff(t, st, ch.ID)
+	st.Close()
+	proj := t.TempDir()
+	if _, err := mgr.CreateModule(api.LocalModuleRequest{Name: "legacy", Dir: proj}); err != nil {
+		t.Fatal(err)
+	}
+	st, _, _ = mgr.open()
+	lm, _ := st.LocalModuleByName("legacy")
+	st.Close()
+	if lm.ArchivedSeq != 3 {
+		t.Fatalf("收编已有频道：archived_seq 应为当前最大 seq: %d", lm.ArchivedSeq)
+	}
+	assertNoReplay(t, mgr, proj, "legacy")
 }

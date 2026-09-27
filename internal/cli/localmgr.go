@@ -236,6 +236,11 @@ func (m *localManager) migrateWith(st *store.Store) error {
 		if err := st.SetArchivedSeq(ch.ID, seq); err != nil {
 			return err
 		}
+		// 旧 kickoff 不占 seq，archived_seq 管不到它：记成已归档、已投，免得第一轮把历史
+		// 开工通知全重放一遍（终审修复 #3）。
+		if err := st.MarkChannelDelivered(ch.ID); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -378,6 +383,7 @@ func (m *localManager) CreateModule(req api.LocalModuleRequest) (api.LocalModule
 		return out, err
 	}
 	defer release()
+	registered := false
 	if lm, err := st.LocalModuleByName(name); err == nil && lm.Dir != dir {
 		return out, invalid("模块 %q 已绑定目录 %s，不能改绑；请删除后重建或换个名字", name, lm.Dir)
 	} else if errors.Is(err, sql.ErrNoRows) {
@@ -387,12 +393,15 @@ func (m *localManager) CreateModule(req api.LocalModuleRequest) (api.LocalModule
 		}
 	} else if err != nil {
 		return out, err
+	} else {
+		registered = true
 	}
 	users, err := usersIn(st)
 	if err != nil {
 		return out, err
 	}
 	ch, err := st.ChannelByName(name)
+	adopt := err == nil && !registered // 频道已存在（联网/M8 遗留）但没登记：收编它的历史
 	if err != nil {
 		if ch, err = st.CreateChannel(name); err != nil {
 			return out, err
@@ -416,6 +425,19 @@ func (m *localManager) CreateModule(req api.LocalModuleRequest) (api.LocalModule
 	}
 	if err := st.UpsertLocalModule(ch.ID, dir); err != nil {
 		return out, err
+	}
+	if adopt {
+		// 收编已有频道：旧信不重新归档、旧 kickoff 不重放、不补投（终审修复 #3，同 migrateWith）
+		seq, err := st.MaxSeq(ch.ID)
+		if err != nil {
+			return out, err
+		}
+		if err := st.SetArchivedSeq(ch.ID, seq); err != nil {
+			return out, err
+		}
+		if err := st.MarkChannelDelivered(ch.ID); err != nil {
+			return out, err
+		}
 	}
 	if err := writeModuleFiles(dir, name); err != nil {
 		return out, err
