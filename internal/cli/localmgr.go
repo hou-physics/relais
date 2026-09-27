@@ -325,6 +325,23 @@ func (m *localManager) newDaemon(publish func(int64, *store.Message, string)) (*
 	return d, nil
 }
 
+// serialized：守卫在跑时，把会挪动/改写信箱目录的操作放进守卫的轮次锁里（终审修复 #4）。
+func (m *localManager) serialized(fn func() error) error {
+	if m.daemon != nil {
+		return m.daemon.Do(fn)
+	}
+	return fn()
+}
+
+// mailboxMissing：守卫在跑时以它上一轮的观察为准；没有守卫（CLI）时直接看目录。
+func (m *localManager) mailboxMissing(lm store.LocalModule) bool {
+	if m.daemon != nil {
+		return slices.Contains(m.daemon.MissingModules(), lm.ChannelID)
+	}
+	st, err := os.Stat(local.MailDir(lm.Dir, lm.Name))
+	return err != nil || !st.IsDir()
+}
+
 func (m *localManager) ScanRepos() ([]api.LocalRepo, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -494,6 +511,7 @@ func (m *localManager) moduleInfo(st *store.Store, lm store.LocalModule) (api.Lo
 	md := local.MailDir(lm.Dir, lm.Name)
 	out := api.LocalModule{Name: lm.Name, Dir: lm.Dir, Mode: a.Mode, Round: store.Round(a.RoundCount), RoundCap: store.Round(a.Cap),
 		NeedsHumanQ: a.NeedsHumanQ, Closed: lm.ClosedAt != "" || a.Closed}
+	out.MailboxMissing = !out.Closed && m.mailboxMissing(lm)
 
 	letters, err := local.ListLetters(md)
 	if err != nil && !os.IsNotExist(err) { // 目录不在（项目被挪走）时按空信箱显示；其它错误如实报
@@ -562,7 +580,7 @@ func (m *localManager) moduleInfo(st *store.Store, lm store.LocalModule) (api.Lo
 		}
 	}
 
-	waitingYou := a.NeedsHumanQ != "" || out.Codex.DeliveryError != "" || len(out.Rejected) > 0
+	waitingYou := a.NeedsHumanQ != "" || out.Codex.DeliveryError != "" || len(out.Rejected) > 0 || out.MailboxMissing
 	switch {
 	case out.Closed:
 		out.State = "已关闭"
@@ -639,7 +657,7 @@ func (m *localManager) PatchModule(name string, p api.LocalModulePatch) (api.Loc
 		return out, err
 	}
 	if p.Name != "" && p.Name != name {
-		if err := renameModule(st, lm, p.Name); err != nil {
+		if err := m.serialized(func() error { return renameModule(st, lm, p.Name) }); err != nil {
 			return out, err
 		}
 		name = p.Name
@@ -728,6 +746,10 @@ func (m *localManager) DeleteModule(name string, files bool) error {
 		return err
 	}
 	defer release()
+	return m.serialized(func() error { return deleteModule(st, name, files) })
+}
+
+func deleteModule(st *store.Store, name string, files bool) error {
 	lm, err := moduleByName(st, name)
 	if err != nil {
 		return err
@@ -805,7 +827,7 @@ func (m *localManager) AttachModule(name string, req api.LocalAttachRequest) (ap
 	if err != nil {
 		return out, err
 	}
-	if err := attachCodex(st, lm, req.Thread); err != nil {
+	if err := m.serialized(func() error { return attachCodex(st, lm, req.Thread) }); err != nil {
 		return out, err
 	}
 	if lm, err = st.LocalModuleByName(name); err != nil {

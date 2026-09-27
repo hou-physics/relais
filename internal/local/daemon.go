@@ -41,6 +41,50 @@ type Daemon struct {
 	// mu：串行化 RunOnce 与 Redeliver（修复轮 1 裁决 c）——两者都会读写同一模块的
 	// outbox/归档文件与登记表，并发跑会互相踩脚。
 	mu sync.Mutex
+
+	// missing：信箱目录不见了的模块（项目被移动或删除？）。守卫不替它重建目录，只记下来
+	// 给控制台显示；单独一把锁，免得控制台查状态要等一整轮 RunOnce（终审修复 #4）。
+	missMu  sync.Mutex
+	missing map[int64]bool
+}
+
+// Do：在守卫的轮次锁里跑 fn——改名/删除/接入这类会挪动或改写信箱目录的操作要跟
+// RunOnce 串行，否则一轮跑到一半目录被挪走，会留下幽灵目录（终审修复 #4）。
+func (d *Daemon) Do(fn func() error) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return fn()
+}
+
+// MissingModules：上一轮发现信箱目录不见了的模块频道 id。
+func (d *Daemon) MissingModules() []int64 {
+	d.missMu.Lock()
+	defer d.missMu.Unlock()
+	out := make([]int64, 0, len(d.missing))
+	for id := range d.missing {
+		out = append(out, id)
+	}
+	slices.Sort(out)
+	return out
+}
+
+// setMissing：记录信箱目录是否不见了；只在状态变化时记一次日志。
+func (d *Daemon) setMissing(m ModuleRef, md string, gone bool) {
+	d.missMu.Lock()
+	defer d.missMu.Unlock()
+	if d.missing[m.ChannelID] == gone {
+		return
+	}
+	if gone {
+		if d.missing == nil {
+			d.missing = map[int64]bool{}
+		}
+		d.missing[m.ChannelID] = true
+		d.log().Warn("信箱目录不见了（项目被移动或删除？），跳过该模块", "module", m.Name, "dir", md)
+	} else {
+		delete(d.missing, m.ChannelID)
+		d.log().Info("信箱目录又出现了，恢复处理", "module", m.Name, "dir", md)
+	}
 }
 
 func (d *Daemon) log() *slog.Logger {
@@ -88,6 +132,13 @@ func (d *Daemon) RunOnce() error {
 	}
 	for _, m := range mods {
 		md := MailDir(m.Dir, m.Name)
+		// 不替不存在的信箱建目录：项目被挪走/删掉时不该在原处"复活"一个空目录，
+		// 改名途中也不该留下旧名的幽灵目录（终审修复 #4）。
+		if st, err := os.Stat(md); err != nil || !st.IsDir() {
+			d.setMissing(m, md, true)
+			continue
+		}
+		d.setMissing(m, md, false)
 		if err := os.MkdirAll(filepath.Join(md, "outbox"), 0o755); err != nil {
 			keep(err)
 			continue

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"os"
@@ -632,4 +633,53 @@ func TestCreateModuleAdoptsChannelWithoutReplay(t *testing.T) {
 		t.Fatalf("收编已有频道：archived_seq 应为当前最大 seq: %d", lm.ArchivedSeq)
 	}
 	assertNoReplay(t, mgr, proj, "legacy")
+}
+
+// 终审修复 #4：守卫在跑时改名走 daemon.Do 串行；改完旧名目录不会被守卫"复活"，
+// 信箱目录不见了时模块状态报 mailbox_missing。
+func TestPatchRenameWithDaemonRunning(t *testing.T) {
+	_, mgr := bootstrapped(t)
+	proj := t.TempDir()
+	if _, err := mgr.CreateModule(api.LocalModuleRequest{Name: "a", Dir: proj}); err != nil {
+		t.Fatal(err)
+	}
+	d, err := mgr.newDaemon(func(int64, *store.Message, string) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { d.Store.Close(); mgr.shared, mgr.daemon = nil, nil }()
+	d.Interval = 5 * time.Millisecond
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { d.Run(ctx); close(done) }()
+	for i := 0; i < 5; i++ {
+		from, to := "a", "b"
+		if i%2 == 1 {
+			from, to = "b", "a"
+		}
+		if _, err := mgr.PatchModule(from, api.LocalModulePatch{Name: to}); err != nil {
+			cancel()
+			<-done
+			t.Fatalf("第 %d 次改名 %s→%s: %v", i, from, to, err)
+		}
+		time.Sleep(15 * time.Millisecond)
+	}
+	cancel()
+	<-done
+	d.RunOnce()
+	if _, err := os.Stat(filepath.Join(proj, "relais", "mail", "b")); err != nil {
+		t.Fatal("改名后的信箱应在")
+	}
+	if _, err := os.Stat(filepath.Join(proj, "relais", "mail", "a")); !os.IsNotExist(err) {
+		t.Fatal("旧名目录不该被守卫重建")
+	}
+	os.RemoveAll(filepath.Join(proj, "relais", "mail", "b"))
+	d.RunOnce()
+	mods, _ := mgr.ListModules()
+	if len(mods) != 1 || !mods[0].MailboxMissing || mods[0].State != "等你" {
+		t.Fatalf("信箱不见了应报 mailbox_missing: %+v", mods)
+	}
+	if _, err := os.Stat(filepath.Join(proj, "relais", "mail", "b")); !os.IsNotExist(err) {
+		t.Fatal("守卫不该重建不见了的信箱")
+	}
 }

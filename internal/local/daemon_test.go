@@ -497,3 +497,23 @@ func TestDaemonRetriesFailedDeliveryAfterInterval(t *testing.T) {
 		t.Fatalf("重试成功应记 ok: %s", status)
 	}
 }
+
+// #4：信箱目录不见了（项目被挪走/删掉）：守卫不重建，记为 missing；目录回来后恢复。
+func TestDaemonSkipsMissingMailbox(t *testing.T) {
+	f := newFixture(t)
+	if err := os.RemoveAll(f.md); err != nil {
+		t.Fatal(err)
+	}
+	f.d.RunOnce()
+	if _, err := os.Stat(f.md); !os.IsNotExist(err) {
+		t.Fatal("守卫不该重建不见了的信箱目录")
+	}
+	if got := f.d.MissingModules(); len(got) != 1 || got[0] != f.chID {
+		t.Fatalf("应记为 missing: %v", got)
+	}
+	EnsureMailDir(f.proj, "m")
+	f.d.RunOnce()
+	if got := f.d.MissingModules(); len(got) != 0 {
+		t.Fatalf("目录回来后应清掉 missing: %v", got)
+	}
+}

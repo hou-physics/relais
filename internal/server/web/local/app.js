@@ -151,6 +151,9 @@ function renderTodo(m) {
   if (!m.closed && !bothItem && sideLabel[ws] && !sideConnected(m, ws) && !(ws === "codex" && codexCovered)) {
     items.push(`<div class="todo-item"><div><b>接入 ${sideLabel[ws]} 对话</b> · 正在等 ${sideLabel[ws]} 回信，在 ${sideLabel[ws]} 对话里说一句：</div>${attachButtons(ws)}</div>`);
   }
+  if (m.mailbox_missing) {
+    items.push(`<div class="todo-item"><div><b>信箱目录不见了（项目被移动或删除？）</b> · ${esc(m.dir)}/relais/mail/${esc(m.name)}/ 不在了，守卫暂停处理这个模块；目录回来后自动恢复，不要了就在「本模块」里删除。</div></div>`);
+  }
   if (m.rejected && m.rejected.length) {
     items.push(`<div class="todo-item"><div><b>有信没法读</b> · outbox 里：${esc(m.rejected.join("、"))}（同名 .txt 里有原因）</div></div>`);
   }
