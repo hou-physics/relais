@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -50,6 +51,21 @@ func ReadWaitMarker(mailDir, side string) (WaitMarker, bool) {
 	return m, true
 }
 
+var kickoffNameRe = regexp.MustCompile(`^kickoff-(\d+)\.md$`)
+
+// kickoffSeq 解析 kickoff-<digits>.md 里的序号；解析不出（含空字符串）按 0 处理。
+func kickoffSeq(name string) (int, bool) {
+	m := kickoffNameRe.FindStringSubmatch(name)
+	if m == nil {
+		return 0, false
+	}
+	n, err := strconv.Atoi(m[1])
+	if err != nil {
+		return 0, false
+	}
+	return n, true
+}
+
 // NewLetters：side 没见过的信（seq > 游标，或游标之后出现的 kickoff 文件），不含 side 自己写的。
 func NewLetters(mailDir, side string, c Cursor) ([]Letter, Cursor, error) {
 	all, err := ListLetters(mailDir)
@@ -61,7 +77,9 @@ func NewLetters(mailDir, side string, c Cursor) ([]Letter, Cursor, error) {
 	for _, l := range all {
 		name := filepath.Base(l.Path)
 		if l.Kind == "kickoff" {
-			if name > next.Kickoff {
+			seen, _ := kickoffSeq(next.Kickoff)
+			cur, _ := kickoffSeq(name)
+			if cur > seen {
 				out = append(out, l)
 				next.Kickoff = name
 			}

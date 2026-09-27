@@ -39,6 +39,23 @@ func TestNewLettersSkipsOwnAndSeen(t *testing.T) {
 	}
 }
 
+func TestNewLettersKickoffSeqNotStringCompare(t *testing.T) {
+	_, md := setupMail(t)
+	put(t, md, "kickoff-1000.md", Letter{Seq: 1000, From: "relais", Kind: "kickoff", Owner: "codex"}, "开工")
+	ls, c, err := NewLetters(md, "claude", Cursor{Kickoff: "kickoff-999.md"})
+	if err != nil || len(ls) != 1 || c.Kickoff != "kickoff-1000.md" {
+		t.Fatalf("kickoff-1000 应比 kickoff-999 新（按数值比较非字符串）: %+v %+v %v", ls, c, err)
+	}
+	ls, _, err = NewLetters(md, "claude", Cursor{Kickoff: "kickoff-1000.md"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	put(t, md, "kickoff-999.md", Letter{Seq: 999, From: "relais", Kind: "kickoff", Owner: "codex"}, "开工")
+	if ls, _, _ := NewLetters(md, "claude", Cursor{Kickoff: "kickoff-1000.md"}); len(ls) != 0 {
+		t.Fatalf("游标已到 1000 时，序号 999 的 kickoff 不应被当新信: %+v", ls)
+	}
+}
+
 func TestWaitReturnsOnNewLetterAndCleansMarker(t *testing.T) {
 	_, md := setupMail(t)
 	done := make(chan []Letter, 1)
