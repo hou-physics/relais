@@ -29,7 +29,7 @@ relais 命令会按环境自动判断（Claude Code 有 CLAUDECODE，Codex 有 C
 
 ## 2. 接入
 雇主说「接入 relais 模块 X」时：
-- claude 侧：在后台运行 ` + "`relais wait X`" + `。它会一直等，信到了就退出并打印信的路径。
+- claude 侧：在后台运行 ` + "`relais wait X`" + `。它会一直等，信到了就退出并打印信的路径。每处理完一封（不管回不回信），都要再在后台运行一次 ` + "`relais wait X`" + `，否则收不到下一封。
 - codex 侧：运行 ` + "`relais attach X`" + `。它把当前这个对话登记为收信对话，之后来信会直接出现在对话里。
 接入后不用再做别的，信到了会有通知。
 
@@ -46,14 +46,14 @@ relais 命令会按环境自动判断（Claude Code 有 CLAUDECODE，Codex 有 C
 - ` + "`relais post X <文件> --needs-human`" + `：需要雇主定夺；文件首行就是问题。
 
 ## 5. 发完之后
-- claude 侧：再在后台运行一次 ` + "`relais wait X`" + `。
+- claude 侧：不管刚才是回了信、还是这封不用回，都再在后台运行一次 ` + "`relais wait X`" + `。
 - codex 侧：不用做。
 
 ## 6. 收敛怎么算
 双方各一封收敛信、第二封带 --ack、承接方一致，就算握手。结论会落在 ` + "`relais/mail/X/conclusion-<序号>.md`" + `，承接方会收到开工通知（文件 ` + "`kickoff-<序号>.md`" + `，发件人 relais）。承接方是 user 时两侧都只等雇主。
 
 ## 7. 雇主的信
-雇主写的信（发件人 hou）会送到两侧，但只由一侧先回：通知里会写明是不是你。不是你就不回，等对方的信。
+雇主写的信（发件人 hou）会送到两侧，但只由一侧先回：通知里会写明是不是你。不是你就不回，等对方的信。claude 侧不用回时也要再运行一次 ` + "`relais wait X`" + `。
 
 ## 8. 不要做的事
 不改别人的信；不往 ` + "`outbox/`" + ` 以外的地方放待发的信；不自己写 ` + "`conclusion-*.md`" + ` 或 ` + "`kickoff-*.md`" + `；不给 Relais 发 HTTP 请求；不读别的模块。
