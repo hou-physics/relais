@@ -31,6 +31,7 @@
       <button id="me-btn" class="avatar-btn" type="button"></button>
       <div id="user-menu" class="menu" hidden>
         <div id="menu-name" class="muted"></div>
+        <button id="menu-modules" type="button" hidden data-i18n="modules">模块</button>
         <button id="menu-admin" type="button" hidden data-i18n="channelAdmin">频道管理</button>
         <button id="menu-settings" type="button" data-i18n="settings">个人设置</button>
         <button id="menu-logout" type="button" class="danger" data-i18n="logout">退出登录</button>
@@ -38,6 +39,16 @@
     </header>
 
     <main id="chat-view">
+      <div id="onboarding" class="muted" hidden data-i18n="onboarding">还没有模块：先去「模块」页新建一个。</div>
+      <div id="open-topic" class="card" hidden>
+        <textarea id="topic-body" data-i18n-placeholder="topicPh" placeholder="写下要让两个 AI 讨论的议题……"></textarea>
+        <div class="row">
+          <label><span data-i18n="firstResponder">先由谁回应</span>
+            <select id="topic-first"><option value="claude">Claude</option><option value="codex">Codex</option></select>
+          </label>
+          <button id="topic-send" type="button" data-i18n="sendTopic">开题</button>
+        </div>
+      </div>
       <div id="auto-bar" hidden>
         <span id="auto-state" class="muted"></span>
         <span id="auto-off-ctl" hidden>
@@ -125,6 +136,29 @@
         <pre id="invite-out" hidden></pre>
       </div>
       <button id="admin-back" type="button" data-i18n="backChat">← 返回聊天</button>
+    </main>
+
+    <main id="modules-view" hidden>
+      <button id="modules-back" type="button" class="ghost" data-i18n="backChat">← 返回</button>
+      <section class="card">
+        <h3 data-i18n="newModule">新建模块</h3>
+        <label><span data-i18n="moduleName">模块名</span> <input id="module-name" placeholder="grammar"></label>
+        <label><span data-i18n="moduleDir">项目文件夹</span>
+          <select id="module-dir"></select>
+          <input id="module-dir-custom" hidden placeholder="/Users/you/project">
+        </label>
+        <button id="module-create" type="button" data-i18n="create">创建</button>
+      </section>
+      <section class="card"><h3 data-i18n="modules">模块</h3><div id="module-list"></div></section>
+      <section class="card">
+        <h3 data-i18n="localSettings">设置</h3>
+        <label><span data-i18n="claudePath">claude 路径</span> <input id="local-settings-claude"></label>
+        <label><span data-i18n="codexPath">codex 路径</span> <input id="local-settings-codex"></label>
+        <label><span data-i18n="defaultMode">新模块默认模式</span>
+          <select id="local-settings-mode"><option value="supervised" data-i18n="modeSupervised">监督</option><option value="autopilot" data-i18n="modeAutopilot">甩手</option></select>
+        </label>
+        <button id="local-settings-save" type="button" data-i18n="save">保存</button>
+      </section>
     </main>
   </section>
 </div>

@@ -29,6 +29,14 @@ const I18N = {
     autoResolved: "✅ 已握手待确认：{s}（承接方 {o}）", autoKickedOff: "已开工（承接方 {o}）· 在工作脑里执行 relais conclusion {c}", autoClosed: "频道已关闭",
     kickoff: "确认开工", reopen: "继续讨论", modeSupervised: "监督：握手后我确认才开工", modeAutopilot: "甩手：握手即开工",
     conclusionTag: "结论", kickoffTag: "开工", answerPh: "回答（以你本人身份发进频道，两侧都看到）", answerSend: "回答并继续",
+    modules: "模块", newModule: "新建模块", moduleName: "模块名", moduleDir: "项目文件夹", customDir: "手填路径…", create: "创建",
+    rules: "编辑规矩", saveRules: "保存规矩", closeModule: "关闭", closeConfirm: "关闭模块 {n}？讨论会停止，数据保留。",
+    localSettings: "设置", claudePath: "claude 路径", codexPath: "codex 路径", defaultMode: "新模块默认模式", hookRewritten: "已保存，两侧 hook 已重写",
+    bridgeAlive: "在跑", bridgeDead: "没在跑", conclusionsCount: "{n} 份结论",
+    openTopic: "开题", topicPh: "写下要让两个 AI 讨论的议题……", firstResponder: "先由谁回应", sendTopic: "开题",
+    copyKickoff: "复制开工指令", kickoffCopied: "已复制，贴给承接方的工作脑即可", onboarding: "还没有模块：先去「模块」页新建一个。",
+    stateRunning: "运行中", statePaused: "已暂停", stateNeedsHuman: "等你回答", stateResolved: "已握手待确认", stateKickedOff: "已开工", stateClosed: "已关闭",
+    openChannel: "打开频道",
   },
   en: {
     tagline: "Messenger between agents · human in the loop", username: "Username", password: "Password", login: "Sign in",
@@ -55,6 +63,14 @@ const I18N = {
     autoResolved: "✅ Handshake reached, awaiting you: {s} (owner {o})", autoKickedOff: "Kicked off (owner {o}) · run relais conclusion {c} in your work session", autoClosed: "Channel closed",
     kickoff: "Confirm kickoff", reopen: "Keep discussing", modeSupervised: "Supervised: I confirm before kickoff", modeAutopilot: "Autopilot: kickoff on handshake",
     conclusionTag: "Conclusion", kickoffTag: "Kickoff", answerPh: "Answer (posted as you, both sides see it)", answerSend: "Answer & resume",
+    modules: "Modules", newModule: "New module", moduleName: "Module name", moduleDir: "Project folder", customDir: "Type a path…", create: "Create",
+    rules: "Edit rules", saveRules: "Save rules", closeModule: "Close", closeConfirm: "Close module {n}? Discussion stops, data is kept.",
+    localSettings: "Settings", claudePath: "claude path", codexPath: "codex path", defaultMode: "New module default mode", hookRewritten: "Saved — both sides' hooks were rewritten",
+    bridgeAlive: "running", bridgeDead: "not running", conclusionsCount: "{n} conclusions",
+    openTopic: "Open topic", topicPh: "Write the topic you want the two AIs to discuss…", firstResponder: "Who answers first", sendTopic: "Open topic",
+    copyKickoff: "Copy kickoff instruction", kickoffCopied: "Copied — paste it into the receiving agent's work session", onboarding: "No modules yet: go to the Modules page to create one.",
+    stateRunning: "Running", statePaused: "Paused", stateNeedsHuman: "Needs your answer", stateResolved: "Resolved, awaiting you", stateKickedOff: "Kicked off", stateClosed: "Closed",
+    openChannel: "Open channel",
   },
   de: {
     tagline: "Bote zwischen Agents · Mensch in der Schleife", username: "Benutzername", password: "Passwort", login: "Anmelden",
@@ -81,6 +97,14 @@ const I18N = {
     autoResolved: "✅ Einigung erreicht, wartet auf dich: {s} (Owner {o})", autoKickedOff: "Gestartet (Owner {o}) · relais conclusion {c} in deiner Arbeitssitzung", autoClosed: "Kanal geschlossen",
     kickoff: "Start bestätigen", reopen: "Weiter diskutieren", modeSupervised: "Beaufsichtigt: ich bestätige vor dem Start", modeAutopilot: "Autopilot: Start bei Einigung",
     conclusionTag: "Fazit", kickoffTag: "Start", answerPh: "Antwort (als du selbst, beide Seiten sehen sie)", answerSend: "Antworten & fortsetzen",
+    modules: "Module", newModule: "Neues Modul", moduleName: "Modulname", moduleDir: "Projektordner", customDir: "Pfad eingeben…", create: "Erstellen",
+    rules: "Regeln bearbeiten", saveRules: "Regeln speichern", closeModule: "Schließen", closeConfirm: "Modul {n} schließen? Die Diskussion stoppt, Daten bleiben erhalten.",
+    localSettings: "Einstellungen", claudePath: "claude-Pfad", codexPath: "codex-Pfad", defaultMode: "Standardmodus für neue Module", hookRewritten: "Gespeichert — Hooks auf beiden Seiten wurden neu geschrieben",
+    bridgeAlive: "läuft", bridgeDead: "läuft nicht", conclusionsCount: "{n} Fazits",
+    openTopic: "Thema eröffnen", topicPh: "Schreib das Thema, das die beiden KIs diskutieren sollen…", firstResponder: "Wer antwortet zuerst", sendTopic: "Thema eröffnen",
+    copyKickoff: "Start-Anweisung kopieren", kickoffCopied: "Kopiert — in die Arbeitssitzung der übernehmenden Seite einfügen", onboarding: "Noch keine Module: auf der Modul-Seite eins anlegen.",
+    stateRunning: "Läuft", statePaused: "Pausiert", stateNeedsHuman: "Braucht deine Antwort", stateResolved: "Einigung erreicht, wartet auf dich", stateKickedOff: "Gestartet", stateClosed: "Geschlossen",
+    openChannel: "Kanal öffnen",
   },
 };
 function detectLang() {
@@ -208,6 +232,7 @@ async function boot() {
     $("menu-name").textContent = me.display_name + "（" + me.username + "）";
     $("menu-admin").hidden = !me.is_admin;
     await loadChannels();
+    await detectLocal();
   } catch {
     $("login-view").hidden = false;
     $("main-view").hidden = true;
@@ -327,6 +352,7 @@ async function openChannel(name) {
 }
 
 async function loadAutoState() {
+  if (!channel) return; // 模块页等无频道场景：不要拼出 /null/auto
   const bar = $("auto-bar");
   let st;
   try { st = await api("/api/channels/" + encodeURIComponent(channel) + "/auto"); }
@@ -345,6 +371,7 @@ async function loadAutoState() {
   // needs-human 时"继续"与回答框并存：联网频道的人可以直接点继续（M5 行为），本地模式用回答框
   $("auto-resume").hidden = !on || !st.paused || st.resolved;
   $("auto-answer-row").hidden = !on || !st.needs_human_q;
+  $("open-topic").hidden = !isLocal || !on || st.in_flight || !!st.needs_human_q || st.resolved;
   const state = $("auto-state");
   if (!on) { state.textContent = t("autoOff"); state.className = "muted"; return; }
   let text = t("autoRunning").replace("{n}", st.round).replace("{cap}", st.round_cap);
@@ -456,6 +483,15 @@ function renderMsg(m) {
     tag.className = "kind-tag";
     tag.textContent = (m.kind === "conclusion" ? t("conclusionTag") : t("kickoffTag")) + (m.owner ? " · " + m.owner : "");
     div.append(tag);
+    // 复制开工指令：结论文件按 kickoff 消息的 id 落盘，开工前 conclusion 卡片对应的文件还不存在，只在 kickoff 卡片显示
+    if (m.kind === "kickoff") {
+      const copyK = document.createElement("button"); copyK.className = "toggle"; copyK.textContent = t("copyKickoff");
+      copyK.onclick = async () => {
+        await navigator.clipboard.writeText("读 relais/conclusions/" + channel + "-" + m.id + ".md，按结论开工");
+        copyK.textContent = t("kickoffCopied"); setTimeout(() => { copyK.textContent = t("copyKickoff"); }, 2000);
+      };
+      div.append(copyK);
+    }
   }
   const head = document.createElement("div");
   head.className = "head";
@@ -583,6 +619,7 @@ function showView(name) {
   $("chat-view").hidden = name !== "chat";
   $("settings-view").hidden = name !== "settings";
   $("admin-view").hidden = name !== "admin";
+  $("modules-view").hidden = name !== "modules";
   $("user-menu").hidden = true;
 }
 $("menu-settings").addEventListener("click", () => {
@@ -597,6 +634,101 @@ let adminDetailChannel = null;
 
 $("menu-admin").addEventListener("click", () => { loadAdminChannels(); showView("admin"); });
 $("admin-back").addEventListener("click", () => showView("chat"));
+
+// 本地模式探测：登录后探一次 /api/local/modules，200 才显示「模块」入口与开题框（联网页面保持不变）
+let isLocal = false;
+async function detectLocal() {
+  try { const mods = await api("/api/local/modules"); isLocal = true; $("onboarding").hidden = mods.length > 0; }
+  catch { isLocal = false; $("onboarding").hidden = true; }
+  $("menu-modules").hidden = !isLocal;
+}
+$("menu-modules").addEventListener("click", () => { loadModules(); showView("modules"); });
+$("modules-back").addEventListener("click", () => showView("chat"));
+
+function stateLabel(s) { return t({ running: "stateRunning", paused: "statePaused", needs_human: "stateNeedsHuman", resolved: "stateResolved", kicked_off: "stateKickedOff", closed: "stateClosed" }[s] || "stateRunning"); }
+
+async function loadModules() {
+  const [mods, repos, settings] = await Promise.all([api("/api/local/modules"), api("/api/local/repos"), api("/api/local/settings")]);
+  const sel = $("module-dir"); sel.innerHTML = "";
+  for (const r of repos) { const o = document.createElement("option"); o.value = r.dir; o.textContent = r.name + "  " + r.dir; sel.append(o); }
+  const custom = document.createElement("option"); custom.value = "__custom__"; custom.textContent = t("customDir"); sel.append(custom);
+  $("module-dir-custom").hidden = sel.value !== "__custom__";
+  const list = $("module-list"); list.innerHTML = "";
+  for (const mod of mods) list.append(renderModule(mod));
+  $("local-settings-claude").value = settings.claude_path || "";
+  $("local-settings-codex").value = settings.codex_path || "";
+  $("local-settings-mode").value = settings.default_mode || "supervised";
+}
+
+function renderModule(mod) {
+  const row = document.createElement("div"); row.className = "module-row";
+  const head = document.createElement("div"); head.className = "head";
+  const name = document.createElement("strong"); name.textContent = mod.name;
+  const dir = document.createElement("span"); dir.className = "muted"; dir.textContent = mod.dir;
+  const state = document.createElement("span"); state.className = mod.state === "needs_human" ? "err" : "muted";
+  state.textContent = stateLabel(mod.state) + " · " + mod.round + "/" + mod.round_cap + " · " + mod.mode + " · " + t("conclusionsCount").replace("{n}", mod.conclusions);
+  head.append(name, dir, state);
+  const beats = document.createElement("div"); beats.className = "muted";
+  for (const side of ["claude", "codex"]) {
+    const dot = document.createElement("span"); dot.className = "dot " + (mod.bridge_alive && mod.bridge_alive[side] ? "ok" : "dead");
+    const lbl = document.createElement("span"); lbl.textContent = side + " bridge " + (mod.bridge_alive && mod.bridge_alive[side] ? t("bridgeAlive") : t("bridgeDead")) + " ";
+    beats.append(dot, lbl);
+  }
+  const actions = document.createElement("div"); actions.className = "actions";
+  const open = document.createElement("button"); open.className = "toggle"; open.textContent = t("openChannel");
+  open.onclick = () => { showView("chat"); openChannel(mod.name); };
+  const rules = document.createElement("button"); rules.className = "toggle"; rules.textContent = t("rules");
+  const editor = document.createElement("div"); editor.hidden = true;
+  const ta = document.createElement("textarea"); const saveBtn = document.createElement("button"); saveBtn.textContent = t("saveRules");
+  editor.append(ta, saveBtn);
+  rules.onclick = () => humanAction(async () => {
+    if (editor.hidden) { const r = await api("/api/local/modules/" + encodeURIComponent(mod.name) + "/rules"); ta.value = r.text; }
+    editor.hidden = !editor.hidden;
+  });
+  saveBtn.onclick = () => humanAction(async () => {
+    await api("/api/local/modules/" + encodeURIComponent(mod.name) + "/rules", { method: "PUT", body: JSON.stringify({ text: ta.value }) });
+    editor.hidden = true;
+  });
+  const close = document.createElement("button"); close.className = "toggle danger"; close.textContent = t("closeModule"); close.hidden = mod.state === "closed";
+  close.onclick = () => humanAction(async () => {
+    if (!confirm(t("closeConfirm").replace("{n}", mod.name))) return;
+    await api("/api/local/modules/" + encodeURIComponent(mod.name) + "/close", { method: "POST" });
+    await loadModules(); loadChannels();
+  });
+  actions.append(open, rules, close);
+  row.append(head, beats, actions, editor);
+  return row;
+}
+
+$("module-dir").addEventListener("change", () => { $("module-dir-custom").hidden = $("module-dir").value !== "__custom__"; });
+$("module-create").addEventListener("click", () => humanAction(async () => {
+  const name = $("module-name").value.trim();
+  const dir = $("module-dir").value === "__custom__" ? $("module-dir-custom").value.trim() : $("module-dir").value;
+  if (!name || !dir) return;
+  await api("/api/local/modules", { method: "POST", body: JSON.stringify({ name, dir }) });
+  $("module-name").value = "";
+  await loadModules(); await loadChannels(); detectLocal();
+}));
+$("local-settings-save").addEventListener("click", () => humanAction(async () => {
+  await api("/api/local/settings", { method: "PUT", body: JSON.stringify({ claude_path: $("local-settings-claude").value.trim(), codex_path: $("local-settings-codex").value.trim(), default_mode: $("local-settings-mode").value }) });
+  alert(t("hookRewritten"));
+}));
+
+// 开题：以人的身份把议题发进频道，body 首行写 "@side 先回" 来指定先由谁回应
+$("topic-send").addEventListener("click", () => humanAction(async () => {
+  const text = $("topic-body").value.trim();
+  if (!text) return;
+  const side = $("topic-first").value;
+  const to = members.filter((m) => m.username !== me.username).map((m) => m.username);
+  const summary = text.split(/\r?\n/)[0].slice(0, 80);
+  await api("/api/channels/" + encodeURIComponent(channel) + "/messages", {
+    method: "POST", body: JSON.stringify({ to, summary, body_md: "@" + side + " 先回\n\n" + text }),
+  });
+  try { localStorage.setItem("relais.topicFirst", side); } catch {}
+  $("topic-body").value = "";
+  refresh();
+}));
+try { $("topic-first").value = localStorage.getItem("relais.topicFirst") || "claude"; } catch {}
 
 async function loadAdminChannels() {
   const box = $("admin-channels");

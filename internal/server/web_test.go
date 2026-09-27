@@ -185,3 +185,32 @@ func TestWebReopenPostsReason(t *testing.T) {
 		t.Fatalf("auto-reopen 须先调 /auto/reopen 再 POST /messages（reopen@%d messages@%d）", r, m)
 	}
 }
+
+// TestWebHasConsoleControls 检查 M8 本地控制台所需的「模块」页、开题框、复制开工指令与引导控件都已接入。
+func TestWebHasConsoleControls(t *testing.T) {
+	html, _ := webFS.ReadFile("web/index.html")
+	for _, id := range []string{`id="menu-modules"`, `id="modules-view"`, `id="module-list"`, `id="module-name"`, `id="module-dir"`, `id="module-dir-custom"`, `id="module-create"`, `id="local-settings-claude"`, `id="local-settings-codex"`, `id="local-settings-mode"`, `id="local-settings-save"`, `id="open-topic"`, `id="topic-body"`, `id="topic-first"`, `id="topic-send"`, `id="onboarding"`} {
+		if !strings.Contains(string(html), id) {
+			t.Fatalf("index.html 缺 %s", id)
+		}
+	}
+	js, _ := webFS.ReadFile("web/app.js")
+	for _, key := range []string{"modules", "newModule", "moduleName", "moduleDir", "customDir", "rules", "saveRules", "closeModule", "closeConfirm", "localSettings", "claudePath", "codexPath", "defaultMode", "hookRewritten", "bridgeAlive", "bridgeDead", "conclusionsCount", "openTopic", "topicPh", "firstResponder", "sendTopic", "copyKickoff", "kickoffCopied", "onboarding", "stateRunning", "stateNeedsHuman", "stateKickedOff", "stateClosed"} {
+		if strings.Count(string(js), key+":") < 3 {
+			t.Fatalf("app.js 三语文案缺 %s", key)
+		}
+	}
+	for _, s := range []string{"/api/local/modules", "/api/local/repos", "/api/local/settings", "/rules", "/close", "先回", "按结论开工", "relais/conclusions/", "__custom__"} {
+		if !strings.Contains(string(js), s) {
+			t.Fatalf("app.js 缺 %s", s)
+		}
+	}
+	// 开题：body 以 @side 开头
+	i := strings.Index(string(js), `$("topic-send")`)
+	if i < 0 || !strings.Contains(string(js)[i:i+1500], `"@" + `) {
+		t.Fatal("开题发送应把 @side 先回 放在正文首行")
+	}
+	if strings.Contains(string(js), ".innerHTML = m.") || strings.Contains(string(js), ".innerHTML = mod.") || strings.Contains(string(js), ".innerHTML = r.") {
+		t.Fatal("动态数据不得拼 innerHTML")
+	}
+}

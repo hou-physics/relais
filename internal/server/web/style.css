@@ -113,3 +113,11 @@ main { max-width: 720px; margin: 0 auto; padding: 20px 16px 0; display: flex; fl
 #auto-answer-row { display: flex; gap: 6px; width: 100%; margin-top: 6px; }
 #auto-answer-row input { flex: 1; }
 #auto-mode { font-size: 12px; }
+
+.module-row { border-top: 1px solid var(--line); padding: 10px 0; display: flex; flex-direction: column; gap: 6px; }
+.module-row .head { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
+.dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; }
+.dot.ok { background: var(--ok); } .dot.dead { background: var(--muted); }
+#open-topic textarea { width: 100%; min-height: 72px; }
+#modules-view { padding-bottom: 40px; gap: 14px; }
+#modules-view label { display: block; margin: 6px 0; }
