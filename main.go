@@ -19,7 +19,7 @@ func main() {
 
 func run(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("用法: relais <serve|login|init|setup|send|draft|inbox|pull|members|agent-guide|user|channel|invite|bridge|admin|auto|auto-turn|needs-human|guidance-pull|doctor|local|version>")
+		return fmt.Errorf("用法: relais <serve|login|init|setup|send|draft|inbox|pull|members|agent-guide|user|channel|invite|bridge|admin|auto|auto-turn|needs-human|guidance-pull|doctor|local|post|wait|attach|version>")
 	}
 	switch args[0] {
 	case "version":
@@ -67,6 +67,12 @@ func run(args []string) error {
 		return cli.RunDoctor(args[1:])
 	case "local":
 		return cli.RunLocal(args[1:])
+	case "post":
+		return cli.RunPost(args[1:], os.Stdout)
+	case "wait":
+		return cli.RunWait(args[1:], os.Stdout)
+	case "attach":
+		return cli.RunAttach(args[1:], os.Stdout)
 	default:
 		return fmt.Errorf("未知子命令 %q", args[0])
 	}

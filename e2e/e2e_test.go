@@ -5,15 +5,18 @@ package e2e
 import (
 	"bytes"
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hou-physics/relais/internal/api"
 	"github.com/hou-physics/relais/internal/cli"
+	"github.com/hou-physics/relais/internal/local"
 	"github.com/hou-physics/relais/internal/server"
 	"github.com/hou-physics/relais/internal/store"
 )
@@ -528,6 +531,68 @@ func TestAnchorM8LocalConsole(t *testing.T) {
 	srv.Handler().ServeHTTP(rr, r2)
 	if rr.Code != 401 {
 		t.Fatalf("锚点M8-6 非回环必须 401, got %d", rr.Code)
+	}
+}
+
+// M9 锚点：serve 在本地模式起守卫——agent 用 local.Post 把信放进 outbox，守卫几秒内归档成 001-claude.md，
+// 本地控制台（回环免钥匙）报告最新一封与轮到谁（替代 M8-4 的"信送到另一侧"锚点）。
+func TestAnchorM9DaemonEndToEnd(t *testing.T) {
+	const listen = "127.0.0.1:18093"
+	ld := t.TempDir()
+	t.Setenv("RELAIS_LOCAL_DIR", ld)
+	t.Setenv("HOME", t.TempDir())
+	if err := cli.RunLocal([]string{"bootstrap", "--listen", listen, "--no-service"}); err != nil {
+		t.Fatal(err)
+	}
+	proj := t.TempDir()
+	if _, err := cli.NewLocalManagerForTest(ld).CreateModule(api.LocalModuleRequest{Name: "m", Dir: proj}); err != nil {
+		t.Fatal(err)
+	}
+	// RunServe 无法优雅停止——测试进程结束即释放端口；端口与其它测试错开
+	go func() { _ = cli.RunServe([]string{"--config", filepath.Join(ld, "server.toml")}) }()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if c, err := net.DialTimeout("tcp", listen, 200*time.Millisecond); err == nil {
+			c.Close()
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("锚点M9-1 守卫端到端：serve 没起来")
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	md := local.MailDir(proj, "m")
+	draft := filepath.Join(md, "drafts", "a.md")
+	if err := os.WriteFile(draft, []byte("第一封\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := local.Post(md, "claude", draft, local.PostOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	deadline = time.Now().Add(8 * time.Second)
+	for {
+		if _, err := os.Stat(filepath.Join(md, "001-claude.md")); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("锚点M9-1 守卫端到端：守卫应在几秒内把 outbox 的信归档成 001-claude.md")
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	resp, err := http.Get("http://" + listen + "/api/local/modules")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("锚点M9-1 守卫端到端：回环免钥匙应 200, got %d", resp.StatusCode)
+	}
+	var mods []api.LocalModule
+	if err := json.NewDecoder(resp.Body).Decode(&mods); err != nil {
+		t.Fatal(err)
+	}
+	if len(mods) != 1 || mods[0].LastSeq != 1 || mods[0].LastFrom != "claude" || mods[0].WaitingFor != "codex" {
+		t.Fatalf("锚点M9-1 守卫端到端：模块状态应为 第1封/来自claude/轮到codex: %+v", mods)
 	}
 }
 

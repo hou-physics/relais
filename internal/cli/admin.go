@@ -2,13 +2,17 @@
 package cli
 
 import (
+	"context"
 	"crypto/rand"
+	"errors"
 	"flag"
 	"fmt"
 	"math/big"
 	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
+	"syscall"
 	"time"
 
 	"github.com/BurntSushi/toml"
@@ -64,11 +68,30 @@ func RunServe(args []string) error {
 	}
 	fmt.Printf("relais 服务启动: %s (base_url=%s)\n", cfg.Listen, cfg.BaseURL)
 	srv := server.New(st, cfg.BaseURL, cfg.DataDir)
+	hs := &http.Server{Addr: cfg.Listen} // Handler 须在 SetLocal 之后取，否则本地路由不注册
 	if cfg.LocalDir != "" {
-		srv.SetLocal(newLocalManager(cfg.LocalDir), localHuman)
-		fmt.Printf("本地模式管理接口已启用（%s）\n", cfg.LocalDir)
+		// 同一个 mgr 既给 SetLocal 又开守卫：Redeliver 经 mgr.daemon 调用，store 句柄也共用
+		mgr := newLocalManager(cfg.LocalDir)
+		srv.SetLocal(mgr, localHuman)
+		d, err := mgr.newDaemon(srv.PublishMessage)
+		if err != nil {
+			return err
+		}
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer stop()
+		go d.Run(ctx)
+		// NotifyContext 接管了 SIGINT/SIGTERM 的默认退出：收到信号时由这里关掉 HTTP 服务，进程正常返回
+		go func() {
+			<-ctx.Done()
+			hs.Close()
+		}()
+		fmt.Printf("本地模式管理接口已启用（%s）\n守卫已启动（每 2 秒扫一次 outbox）\n", cfg.LocalDir)
 	}
-	return http.ListenAndServe(cfg.Listen, srv.Handler())
+	hs.Handler = srv.Handler()
+	if err := hs.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
+		return err
+	}
+	return nil
 }
 
 func RunUser(args []string) error {

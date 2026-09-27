@@ -3,13 +3,17 @@ package cli
 import (
 	"encoding/json"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/BurntSushi/toml"
+	"github.com/hou-physics/relais/internal/api"
+	"github.com/hou-physics/relais/internal/local"
 	"github.com/hou-physics/relais/internal/store"
 )
 
@@ -225,5 +229,43 @@ func TestRunServeRefusesLocalDirOnNonLoopback(t *testing.T) {
 	err := RunServe([]string{"--config", p})
 	if err == nil || !strings.Contains(err.Error(), "不是回环地址") {
 		t.Fatalf("应拒绝启动: %v", err)
+	}
+}
+
+func TestRunServeStartsDaemonInLocalMode(t *testing.T) {
+	ld := t.TempDir()
+	mgr := newLocalManager(ld)
+	if _, err := mgr.bootstrap("127.0.0.1:18092"); err != nil {
+		t.Fatal(err)
+	}
+	proj := t.TempDir()
+	if _, err := mgr.CreateModule(api.LocalModuleRequest{Name: "m", Dir: proj}); err != nil {
+		t.Fatal(err)
+	}
+	go func() { _ = RunServe([]string{"--config", localServerConfigPath(ld)}) }()
+	waitListen("127.0.0.1:18092", 5*time.Second)
+	md := local.MailDir(proj, "m")
+	os.WriteFile(filepath.Join(md, "drafts", "a.md"), []byte("第一封\n"), 0o644)
+	if _, err := local.Post(md, "claude", filepath.Join(md, "drafts", "a.md"), local.PostOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(8 * time.Second)
+	for {
+		if _, err := os.Stat(filepath.Join(md, "001-claude.md")); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("守卫应在几秒内归档 outbox 里的信")
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	resp, err := http.Get("http://127.0.0.1:18092/api/local/modules")
+	if err != nil || resp.StatusCode != 200 {
+		t.Fatalf("回环免钥匙: %v", err)
+	}
+	var mods []api.LocalModule
+	json.NewDecoder(resp.Body).Decode(&mods)
+	if len(mods) != 1 || mods[0].LastSeq != 1 || mods[0].LastFrom != "claude" || mods[0].WaitingFor != "codex" {
+		t.Fatalf("状态: %+v", mods)
 	}
 }
