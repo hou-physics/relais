@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -104,36 +105,44 @@ func runLocalInit(args []string) error {
 	return nil
 }
 
-// installLocalServices：serve + 两个 bridge 的 launchd 常驻；已存在的 plist 跳过（spec §3.1）。
+// uninstallOldBridges 卸掉 M9 之前遗留的两个 bridge 常驻（com.relais.local.bridge.{claude,codex}）：
+// 存在则 launchctl bootout（失败忽略，常驻可能本来就没跑）并删 plist 文件；返回删掉的 label。
+// launchctl 与 plistDir 都是参数，方便测试不碰真实 ~/Library 与 launchd。
+func uninstallOldBridges(launchctl func(args ...string) error, plistDir string) []string {
+	var removed []string
+	for _, side := range []string{"claude", "codex"} {
+		label := "com.relais.local.bridge." + side
+		p := filepath.Join(plistDir, label+".plist")
+		if _, err := os.Stat(p); err != nil {
+			continue
+		}
+		_ = launchctl("bootout", fmt.Sprintf("gui/%d/%s", os.Getuid(), label))
+		_ = os.Remove(p)
+		removed = append(removed, label)
+	}
+	return removed
+}
+
+// installLocalServices：M9 起常驻只剩 com.relais.local.serve（bridge 已并入 serve 的守卫，见 Task 10）；
+// 升级时先卸掉旧版遗留的两个 bridge 常驻。已存在且指向当前二进制的 plist 跳过（spec §3.1）。
 // 提示信息走 stderr，保证 bootstrap --json 的 stdout 只有一行 JSON。
 func installLocalServices(ld, scPath string) error {
 	relais, _ := os.Executable()
-	type svc struct {
-		label string
-		args  []string
-		env   map[string]string
+	home, _ := os.UserHomeDir()
+	for _, l := range uninstallOldBridges(func(args ...string) error { return exec.Command("launchctl", args...).Run() }, filepath.Join(home, "Library", "LaunchAgents")) {
+		fmt.Fprintf(os.Stderr, "已卸载旧常驻 %s（M9 起不再需要 bridge）\n", l)
 	}
-	svcs := []svc{{"com.relais.local.serve", []string{relais, "serve", "--config", scPath}, nil}}
-	for _, side := range []string{"claude", "codex"} {
-		d := filepath.Join(ld, "sides", side)
-		svcs = append(svcs, svc{"com.relais.local.bridge." + side,
-			[]string{relais, "bridge", "--interval", "5", "--hook", filepath.Join(d, "hooks", "auto-reply.sh")},
-			map[string]string{"RELAIS_CONFIG_DIR": d, "HOME": os.Getenv("HOME"), "PATH": os.Getenv("PATH")}})
+	label := "com.relais.local.serve"
+	p := plistPathFor(label)
+	if !plistNeedsInstall(p, relais) {
+		fmt.Fprintf(os.Stderr, "常驻 %s 已存在，跳过\n", label)
+		return nil
 	}
-	for _, v := range svcs {
-		p := plistPathFor(v.label)
-		if !plistNeedsInstall(p, relais) {
-			fmt.Fprintf(os.Stderr, "常驻 %s 已存在，跳过\n", v.label)
-			continue
-		}
-		if _, err := os.Stat(p); err == nil {
-			fmt.Fprintf(os.Stderr, "常驻 %s 指向旧二进制，重装\n", v.label)
-		}
-		if _, err := installPlist(v.label, v.args, v.env); err != nil {
-			return err
-		}
+	if _, err := os.Stat(p); err == nil {
+		fmt.Fprintf(os.Stderr, "常驻 %s 指向旧二进制，重装\n", label)
 	}
-	return nil
+	_, err := installPlist(label, []string{relais, "serve", "--config", scPath}, map[string]string{"HOME": home, "PATH": os.Getenv("PATH")})
+	return err
 }
 
 // runLocalBootstrap：只搭环境（服务器配置、三账号、设置、常驻），不建模块——

@@ -163,6 +163,50 @@ func TestLocalInitQuotesPaths(t *testing.T) {
 	}
 }
 
+func TestUninstallOldBridges(t *testing.T) {
+	dir := t.TempDir()
+	for _, l := range []string{"com.relais.local.bridge.claude", "com.relais.local.bridge.codex", "com.relais.local.serve"} {
+		os.WriteFile(filepath.Join(dir, l+".plist"), []byte("<plist/>"), 0o644)
+	}
+	var calls [][]string
+	removed := uninstallOldBridges(func(args ...string) error { calls = append(calls, args); return nil }, dir)
+	if len(removed) != 2 {
+		t.Fatalf("应卸两个 bridge: %v", removed)
+	}
+	for _, l := range []string{"com.relais.local.bridge.claude", "com.relais.local.bridge.codex"} {
+		if _, err := os.Stat(filepath.Join(dir, l+".plist")); err == nil {
+			t.Fatalf("%s.plist 应删除", l)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(dir, "com.relais.local.serve.plist")); err != nil {
+		t.Fatal("serve 的 plist 不能动")
+	}
+	if len(calls) != 2 || calls[0][0] != "bootout" {
+		t.Fatalf("应调用 launchctl bootout: %v", calls)
+	}
+	if again := uninstallOldBridges(func(args ...string) error { return nil }, dir); len(again) != 0 {
+		t.Fatal("幂等")
+	}
+}
+
+func TestInstallerScriptShape(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "安装 Relais 本地模式.command"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(data)
+	for _, must := range []string{"local bootstrap --json", "com.relais.local.serve", "kickstart", "open \"$BASE\""} {
+		if !strings.Contains(s, must) {
+			t.Fatalf("安装脚本缺 %q", must)
+		}
+	}
+	for _, gone := range []string{"choose file", "--claude", "--codex", "human.txt", "密码", "bridge.claude", "bridge.codex"} {
+		if strings.Contains(s, gone) {
+			t.Fatalf("安装脚本不该再有 %q", gone)
+		}
+	}
+}
+
 func captureStdout(t *testing.T, fn func()) string {
 	t.Helper()
 	old := os.Stdout
