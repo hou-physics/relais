@@ -8,7 +8,7 @@ import (
 )
 
 // 发版时与 server 包的 Version 常量同步更新。
-const version = "0.6.0-m8"
+const version = "0.7.0-m9"
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {

@@ -5,6 +5,22 @@
 
 ---
 
+## 2026-09-28 · D46 M9 执行期实现选择
+
+- **问题**：D45 spec 定稿后按计划落地，执行期又出现一批与 spec 文字不完全一致、或 spec 未覆盖的实现细节，记档防后人"修正"或静默分歧。
+- **考虑过**：kickoff 游标严格照 spec 用字符串比较——被否：seq 到三位数后字符串序与数字序不一致，会永久漏投；协议文案维持"接入后不用再做别的"——被否：不回信的场合（如只需 ack 或纯旁听）会从此收不到下一封的门铃；回环免钥匙照 spec §8 字面（任意来源、只看是不是回环地址）——被否：任意网页都能拿浏览器发起回环请求，等于把 M8 已有的密钥防护整个撤掉，是明显的安全回退。
+- **选择**：
+  1. spec 定案的五处已知偏离（见 D45 之前的计划头「已知偏离 spec」，此处原样落地不变）：① kickoff 消息不占 seq（`store.Kickoff` 沿用 M7 `seq=0`），归档文件名为 `kickoff-<结论seq>.md` 而非 `NNN-relais.md`，`wait` 的游标文件同时记 `seq` 与最近见过的 kickoff 文件名；② 结论信保留真实发件人：握手第二封（`kind=conclusion`）归档为 `NNN-<side>.md`、`kind: conclusion`，`from:` 是写它的 agent，`conclusion-<seq>.md` 是它的副本（`from: relais`），只有 kickoff 文件 `from: relais`；③ 回合计数改由守卫每入库一封 agent 信（`kind` 为 `letter`/`resolved`）调用新方法 `store.CountLocalTurn`，`round_count>=cap` 时置 needs-human（沿用 `capHitQuestion` 文案），不再有 `RequestTurn` 的拒绝；④ `relais conclusion` 子命令删除（读旧目录 `relais/conclusions/`），新布局里结论文件可直接读；⑤ 模块登记表从两侧 `projects.toml` 改为 SQLite `local_modules`，`sides/` 目录不再生成也不再读（升级时导入一次）。
+  2. kickoff 游标按数字比较，不用字符串比较——字符串比较在 `seq` 到三位数（≥1000）后会永久漏投后续 kickoff。
+  3. 协议 §2/§5/§7 明确写成"每处理完一封（不管回不回）都再运行 `relais wait`"，去掉原「接入后不用再做别的」——否则纯 ack、旁听等不回信的场合会失去门铃、卡在那不再醒来。
+  4. 守卫实现补了四处 spec 未细化的地方：`.attach-codex` 标记的时间按秒比较（否则每次 tick 都会把刚投递错误的信当过期清掉）；outbox 文件要等全部后续步骤（入库、归档、投递、通知）都成功后才删，命中 `sent_keys`（已发过）的重放要跳过计回合与通知；不能入库的信（发件人未知、`kind` 非法、`ack_of` 指不到）改名为 `.rejected` 并照样通知人，不静默丢弃；`Letter` 加 `to` 字段，只在收件人里含 `codex` 时才 `queue` 给它，`Redeliver`（补投）走同一条规则；`RunOnce` 与 `Redeliver` 互斥，避免同一封信被两条路径同时处理。
+  5. 服务器给回环免钥匙加了浏览器护栏（相对 spec §8 字面是一处安全回退修正）：`Host` 必须是回环地址，非 GET 请求还要求 `Origin` 是回环或 `Sec-Fetch-Site` 为 `same-origin`/`none`，否则一律 403——不然 spec §8 原文会让任意网页靠浏览器自动带的回环请求做 CSRF 或 DNS 重绑定攻击；错误信息经 `X-Relais-Error` 头回传时用 `QueryEscape` 避免头注入；`ServeMux` 给 `/api/local/` 加了按方法区分的 404 兜底，线上模式的 `/local/` 路径同样兜底 404。
+  6. CLI 补了五处执行期发现的边界：未登记模块的信箱目录下已有旧信时 `CreateModule` 直接拒绝，否则新频道 `seq` 从 1 起会覆盖用户保留下来的旧信；删信箱前先解析符号链接，避免误删链接目标；`relais serve` 改为按 `ctx` 驱动、可优雅停止，测试才能反复起停不泄漏进程；`post`/`wait`/`attach` 的标志允许放在位置参数前后，不强制顺序；`relais wait` 命令输出末尾加一句提醒，处理完这封信要再运行一次。
+  7. 常驻服务只保留一个 `com.relais.local.serve`，`bootstrap` 升级时自动卸掉旧版本装的两个 bridge plist，不留孤儿常驻。
+  8. 本地控制台页面补了两处交互细节：`[hidden]` 属性要能覆盖 flex 布局（不然元素该藏藏不住）；轮询刷新时不覆盖用户正在输入中的内容。
+- **状态**：live（v0.7.0-m9）。
+- **反转触发**：Codex 升级改了 `queue`/`threads` 表 → Codex 侧退回门铃；Claude Code 强杀长时间后台命令 → `wait` 加超时循环。
+
 ## 2026-09-27 · D45 M9 接入现有对话：守卫 + 门铃 + 传输协议；本地控制台独立重做
 
 - **问题**：M7/M8 的无头讨论脑对 Hou 是黑盒：看不见讨论、插不了话、通知乱码后更不知所措。他要的是"讨论就发生在我开着的两个对话里，工具只搬信"。

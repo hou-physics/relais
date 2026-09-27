@@ -56,19 +56,17 @@ Hou 的 Mac                    香港 VPS                     伙伴的 Windows
 
 ⚠️ Windows：不要在 --hook 命令行里直接写 %RELAIS_MSG_*%（cmd 会在解析前展开，恶意摘要可能注入命令）；请在脚本内部读取环境变量。Unix 的 $VAR 在运行时展开、不会被二次解析，是安全的。
 
-## 本地单人模式（M8 控制台）
+## 本地单人模式（M9：接入现有对话）
 
-一个人、一台 Mac，让本机的 Claude Code 与 Codex 通过 Relais 自己讨论出结论，人只做裁决。全程在浏览器里完成，不需要敲命令。
+一个人、一台 Mac，让你正在用的 Claude Code 对话和 Codex 对话隔着 Relais 互相写信讨论，直到双方都说"可以收敛"。讨论就发生在你开着的那两个对话里，你随时能看、能插话；Relais 只负责搬信。
 
-1. **安装**：双击仓库根目录的 `安装 Relais 本地模式.command`。它编译并安装 `relais`，起本机服务、两侧身份与常驻 bridge，最后在浏览器打开控制台，并显示网页登录账号与初始密码（也存在 `~/Library/Application Support/relais-local/human.txt`）。
-2. **新建模块**：控制台「模块」页 →「新建模块」，填模块名、点选项目文件夹。项目里会生成 `relais/`（配置、`RULES.md` 铁律、`AGENT.md` 工作脑说明），并在项目根的 `CLAUDE.md`/`AGENTS.md` 末尾追加一段指向它的说明（只追加，不动原有内容）；两侧 bridge 在几秒内自动接上（模块卡片上的心跳灯变绿）。项目放在 桌面/文稿/下载 里时，需要在 macOS「系统设置 → 隐私与安全性 → 文件与文件夹」里给 `relais` 授权一次（这些目录不在自动列表里，手填路径即可）。
-3. **开题**：进入模块频道 →「开题」，写议题，选哪一侧先回（信首行 `@codex 先回` / `@claude 先回`）。之后两侧讨论脑按回合自动来回，时间线实时显示。
-4. **裁决**：两侧卡住、承接方分歧或回合打满时，频道里会出现 needs-human，在网页回答即可（只有该接话的一侧会回）。监督模式下两侧 RESOLVED 握手后点「确认开工」；甩手模式握手即自动开工。
-5. **开工**：结论落到项目的 `relais/conclusions/<模块>-<id>.md`，开工卡片上点「复制开工指令」（旁边也显示文件路径），贴给你正在用的 Claude Code / Codex（工作脑）。
+1. **安装**：双击仓库根目录的 `安装 Relais 本地模式.command`。它编译并安装 `relais`，装一个常驻（`relais serve`），最后在浏览器打开控制台。控制台只认本机，不需要登录。
+2. **新建模块**：控制台 → 新建模块，填名字、点选项目文件夹。项目里会生成 `relais/PROTOCOL.md`（两侧共读的传信协议）和 `relais/mail/<模块>/`（信箱），并在 `CLAUDE.md`/`AGENTS.md` 末尾加两行指针。
+3. **接入两侧对话**：在 Claude Code 对话里说「接入 relais 模块 X」，它会在后台跑 `relais wait X`；在 Codex 对话里说同一句，它会跑 `relais attach X`。控制台的「现在」一栏会显示两侧是否接上。
+4. **讨论**：任一侧（或你在控制台）写第一封信。之后 Claude 侧靠 `wait` 被叫醒、Codex 侧由 Relais 直接把信塞进对话。每封信都落在 `relais/mail/<模块>/NNN-<发件人>.md`，你在两个对话里都看得见，也能直接插话。
+5. **收敛与开工**：双方各发一封收敛信（第二封是附和）即握手。结论落在 `conclusion-NNN.md`；监督模式下你在控制台点「确认开工」，承接方那一侧会收到开工通知。需要你定夺、回合到顶、投递失败时，控制台「该你做」会亮起并弹桌面通知。
 
-也可以直接对工作脑说话：说"把这个拿去讨论"，它会把当前背景压缩成一封信发进模块；说"开工"，它会读最新结论并实施（说明写在项目的 `relais/AGENT.md`）。
-
-命令行仍然可用（`relais local bootstrap|init|status|close …`、`relais conclusion`），但不再必需。
+agent 侧只有三条命令，全部只读写项目目录、不联网：`relais post <模块> <文件> [--resolved --owner …|--ack|--needs-human]`、`relais wait <模块>`、`relais attach <模块>`。协议全文见项目里的 `relais/PROTOCOL.md`，它只规定信怎么走，不规定信里写什么。
 
 ## 消息格式
 
