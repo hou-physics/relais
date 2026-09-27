@@ -158,4 +158,13 @@ func TestSetCapAndMaxSeq(t *testing.T) {
 	if got, _ := st.SeqOf(m.ID); got != 1 {
 		t.Fatalf("SeqOf 应与 MaxSeq 一致: %d", got)
 	}
+
+	// 无 channel_auto 行时 SetCap 走 INSERT 分支，不应把 enabled 一并置 1
+	ch3, _ := st.CreateChannel("noauto2")
+	if err := st.SetCap(ch3.ID, 10); err != nil {
+		t.Fatal(err)
+	}
+	if a, err := st.GetAuto(ch3.ID); err != nil || a.Cap != 10 || a.Enabled {
+		t.Fatalf("SetCap 插入分支不应启用自动模式: %+v %v", a, err)
+	}
 }

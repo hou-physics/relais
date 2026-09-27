@@ -172,9 +172,9 @@ func (s *Store) CountLocalTurn(channelID int64) (bool, error) {
 	return true, nil
 }
 
-// SetCap 调整频道自动回合上限，不重置已有的 round_count（不同于 SetAutoEnabled）。
+// SetCap 调整频道自动回合上限，不重置已有的 round_count，也不改变 enabled（不同于 SetAutoEnabled）。
 func (s *Store) SetCap(channelID int64, cap int) error {
-	_, err := s.db.Exec(`INSERT INTO channel_auto (channel_id, enabled, cap) VALUES (?,1,?)
+	_, err := s.db.Exec(`INSERT INTO channel_auto (channel_id, cap) VALUES (?,?)
 		ON CONFLICT(channel_id) DO UPDATE SET cap=excluded.cap`, channelID, cap)
 	return err
 }
