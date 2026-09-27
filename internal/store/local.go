@@ -250,7 +250,8 @@ func (s *Store) ReopenChannel(channelID int64) error {
 // PendingCodexDeliveries：该投给 codex 却还没投成功的消息 id（终审修复 #2）。
 // 条件：收件人含 codex 账号或是 kickoff；已归档（普通信 seq<=archived_seq，kickoff 有
 // archive 投递记录）；不是 codex 自己发的；没有 (id,'codex',status='ok') 的投递记录。
-// 按时间先后排列（kickoff 排在它的结论之后，因为它总是后建的）。
+// 按信的先后排列：普通信按 seq；kickoff 不占 seq（seq=0）、常与结论同一秒建，所以按它
+// ack_of 指向的结论的 seq 排、并排在该结论之后（终审修复补）。
 func (s *Store) PendingCodexDeliveries(channelID int64) ([]string, error) {
 	rows, err := s.db.Query(`SELECT m.id FROM messages m
 		JOIN local_modules lm ON lm.channel_id=m.channel_id
@@ -260,7 +261,7 @@ func (s *Store) PendingCodexDeliveries(channelID int64) ([]string, error) {
 		AND ((m.kind<>'kickoff' AND m.seq>0 AND m.seq<=lm.archived_seq)
 		     OR (m.kind='kickoff' AND EXISTS (SELECT 1 FROM local_deliveries d WHERE d.message_id=m.id AND d.side='archive')))
 		AND NOT EXISTS (SELECT 1 FROM local_deliveries d WHERE d.message_id=m.id AND d.side='codex' AND d.status='ok')
-		ORDER BY m.created_at, m.seq, m.id`, channelID)
+		ORDER BY COALESCE((SELECT a.seq FROM messages a WHERE a.id=m.ack_of AND m.kind='kickoff'), m.seq), (m.kind='kickoff'), m.created_at, m.id`, channelID)
 	if err != nil {
 		return nil, err
 	}

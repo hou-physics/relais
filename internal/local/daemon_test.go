@@ -158,6 +158,10 @@ func TestDaemonHandshakeConclusionKickoffAndWait(t *testing.T) {
 	if !strings.Contains(string(argv), "你是承接方") || !strings.Contains(string(argv), "conclusion-002.md") {
 		t.Fatalf("codex 应收到开工通知: %q", argv)
 	}
+	// 终审修复补：甩手模式下 kickoff 与结论同一秒建，Codex 也必须先收到附和、再收到开工
+	if i, j := strings.Index(string(argv), "这是对方的附和"), strings.Index(string(argv), "你是承接方"); i < 0 || j < i {
+		t.Fatalf("应先投附和（002）再投开工: %q", argv)
+	}
 	// claude 侧 wait 立即拿到附和之后的新东西：kickoff（001 是对方的、002 是自己的）
 	ls, err := Wait(nil, f.md, "claude", 10*time.Millisecond, 0, "")
 	if err != nil || len(ls) != 2 || ls[0].Seq != 1 || ls[1].Kind != "kickoff" {
@@ -365,7 +369,9 @@ func TestDaemonRedeliverRespectsAddressing(t *testing.T) {
 	f := newFixture(t)
 	WriteAttach(f.md, Attach{ThreadID: "t-1", At: time.Now()})
 	f.post(t, "claude", "第一封\n", PostOpts{})
-	f.d.RunOnce() // 001-claude.md 自动投给 codex 一次
+	t.Setenv("FAKE_CODEX_FAIL", "1")
+	f.d.RunOnce() // 001-claude.md 自动投给 codex 一次，失败，留在待投集合里
+	t.Setenv("FAKE_CODEX_FAIL", "0")
 	users := f.d.Users
 	f.st.SaveMessage(f.chID, users["hou"], []int64{users["claude"]}, "仅抄送 claude", "私下说一句\n", "")
 	f.d.RunOnce() // 归档 002-hou.md，但 to=[claude]，deliver() 不该投给 codex

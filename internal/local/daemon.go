@@ -152,7 +152,8 @@ func (d *Daemon) RunOnce() error {
 				_ = d.Store.RecordDelivery(l.ID, "claude", "ok", "")
 			}
 		}
-		keep(d.deliverPending(m, md))
+		_, err = d.deliverPending(m, md, false)
+		keep(err)
 	}
 	return first
 }
@@ -170,15 +171,16 @@ func (d *Daemon) now() time.Time {
 
 // deliverPending：spec §7.3 的 codex 侧，按「待投集合」而不是「本轮新归档」驱动
 // （终审修复 #2）：接入前写给 codex 的信在接入后补投；归档后、投递前崩溃也不会丢。
-// 按先后顺序投，遇到失败或还在重试间隔内的就停，保证 Codex 收信不乱序。
-func (d *Daemon) deliverPending(m ModuleRef, md string) error {
+// 按先后顺序投，遇到失败或还在重试间隔内的就停，保证 Codex 收信不乱序。force（控制台
+// 「重新投递」）不看重试间隔、也不看是否已接入。返回实际尝试投递的封数。
+func (d *Daemon) deliverPending(m ModuleRef, md string, force bool) (int, error) {
 	ids, err := d.Store.PendingCodexDeliveries(m.ChannelID)
 	if err != nil || len(ids) == 0 {
-		return err
+		return 0, err
 	}
 	all, err := ListLetters(md)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	byID := make(map[string]Letter, len(all))
 	for _, l := range all {
@@ -187,13 +189,14 @@ func (d *Daemon) deliverPending(m ModuleRef, md string) error {
 		}
 	}
 	_, attached := ReadAttach(md)
+	tried := 0
 	for _, id := range ids {
-		if status, _, at, err := d.Store.Delivery(id, "codex"); err == nil && status == "error" {
+		if status, _, at, err := d.Store.Delivery(id, "codex"); err == nil && status == "error" && !force {
 			if !attached {
-				return nil // 仍未接入：重投也是同样的错，等接入（接入会清掉失败记录）
+				return tried, nil // 仍未接入：重投也是同样的错，等接入（接入会清掉失败记录）
 			}
 			if t, err := time.Parse(time.RFC3339, at); err == nil && d.now().Sub(t) < codexRetryAfter {
-				return nil
+				return tried, nil
 			}
 		}
 		l, ok := byID[id]
@@ -201,11 +204,12 @@ func (d *Daemon) deliverPending(m ModuleRef, md string) error {
 			d.log().Warn("待投给 codex 的信找不到归档文件，跳过", "module", m.Name, "id", id)
 			continue
 		}
+		tried++
 		if err := d.deliverCodex(m, md, l); err != nil {
-			return err
+			return tried, err
 		}
 	}
-	return nil
+	return tried, nil
 }
 
 func (d *Daemon) syncAttach(m ModuleRef, md string) {
@@ -518,7 +522,7 @@ func (d *Daemon) deliverCodex(m ModuleRef, md string, l Letter) error {
 	return nil
 }
 
-// Redeliver：对最后一封应投给 codex 的信（最新的非 codex 归档信或 kickoff）重跑投递。
+// Redeliver：控制台「重新投递」——按先后补投所有该投给 codex 却没投成的信（不看重试间隔）。
 func (d *Daemon) Redeliver(channelID int64) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -532,19 +536,17 @@ func (d *Daemon) Redeliver(channelID int64) error {
 		}
 		md := MailDir(m.Dir, m.Name)
 		d.syncAttach(m, md)
-		ls, err := ListLetters(md)
+		// 跟守卫每轮走同一套待投集合（终审修复补）：按先后补投全部没投成的信，不只最后
+		// 一封，也不会乱序；收件规则（只投 to 里点了名 codex 的信，kickoff 例外）同
+		// PendingCodexDeliveries。
+		n, err := d.deliverPending(m, md, true)
 		if err != nil {
 			return err
 		}
-		// 挑投递目标的规则跟 deliver() 保持一致（修复轮 2）：只挑 to 里点了名 codex 的信，
-		// kickoff 例外一律算在内；不能再按 From != "codex" 挑，那样会把雇主只写给 claude
-		// 的悄悄话也当成该投给 codex 的目标。
-		for i := len(ls) - 1; i >= 0; i-- {
-			if ls[i].Kind == "kickoff" || slices.Contains(ls[i].To, "codex") {
-				return d.deliverCodex(m, md, ls[i])
-			}
+		if n == 0 {
+			return fmt.Errorf("没有需要投给 Codex 的信")
 		}
-		return fmt.Errorf("没有需要投给 Codex 的信")
+		return nil
 	}
 	return fmt.Errorf("模块不存在或已关闭")
 }
