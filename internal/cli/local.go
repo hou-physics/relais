@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/exec"
@@ -199,13 +200,19 @@ func runLocalBootstrap(args []string) error {
 		waitListen(*listen, 5*time.Second)
 	}
 	if *asJSON {
-		return json.NewEncoder(os.Stdout).Encode(map[string]any{"base_url": res.BaseURL, "human_user": res.HumanUser, "human_password": res.HumanPassword, "password_shown": res.PasswordShown})
+		return printBootstrapJSON(os.Stdout, res)
 	}
 	fmt.Printf("本地模式环境已就绪：%s\n控制台: %s（账号 %s）\n", shq(ld), res.BaseURL, res.HumanUser)
 	if res.PasswordShown {
 		fmt.Printf("初始密码: %s（已存到 %s）\n", res.HumanPassword, shq(filepath.Join(ld, "human.txt")))
 	}
 	return nil
+}
+
+// printBootstrapJSON：安装脚本读的契约——恰好一行 JSON，四个键。
+// bootstrap --json 路径上的其它提示（常驻跳过、waitListen 超时）一律走 stderr。
+func printBootstrapJSON(w io.Writer, res bootstrapResult) error {
+	return json.NewEncoder(w).Encode(map[string]any{"base_url": res.BaseURL, "human_user": res.HumanUser, "human_password": res.HumanPassword, "password_shown": res.PasswordShown})
 }
 
 // isLoopbackListen：本地模式只允许监听回环地址（spec §11）。
@@ -238,7 +245,7 @@ func waitListen(addr string, d time.Duration) {
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
-	fmt.Printf("提示：%s 还没响应，launchd 可能仍在启动；稍后用 relais local status 确认。\n", addr)
+	fmt.Fprintf(os.Stderr, "提示：%s 还没响应，launchd 可能仍在启动；稍后用 relais local status 确认。\n", addr)
 }
 
 func runLocalStatus() error {

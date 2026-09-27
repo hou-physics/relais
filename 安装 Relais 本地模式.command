@@ -11,7 +11,7 @@ command -v go >/dev/null 2>&1 || fail "没找到 Go。请先安装 Go（https://
 BIN_DIR=/opt/homebrew/bin
 if [ ! -w "$BIN_DIR" ]; then BIN_DIR="$HOME/bin"; mkdir -p "$BIN_DIR"; fi
 echo "编译 relais → $BIN_DIR/relais"
-CGO_ENABLED=0 go build -o "$BIN_DIR/relais" .
+CGO_ENABLED=0 go build -o "$BIN_DIR/relais" . || fail "编译失败，详情见终端。"
 RELAIS="$BIN_DIR/relais"
 
 pick() { osascript -e "POSIX path of (choose file with prompt \"$1\")" 2>/dev/null || true; }
@@ -34,9 +34,11 @@ for L in com.relais.local.serve com.relais.local.bridge.claude com.relais.local.
   if [ -f "$HOME/Library/LaunchAgents/$L.plist" ]; then launchctl kickstart -k "gui/$(id -u)/$L" 2>/dev/null || true; fi
 done
 
+WHERE="relais 已装到 $BIN_DIR"
+if [ "$BIN_DIR" != /opt/homebrew/bin ]; then WHERE="$WHERE（请确认它在 PATH 里）"; fi
 if [ "$SHOWN" = "true" ]; then
-  dialog "安装完成。控制台：$BASE\n账号：hou\n初始密码：$PW\n（已存到 ~/Library/Application Support/relais-local/human.txt）"
+  dialog "安装完成。控制台：$BASE\n账号：hou\n初始密码：$PW\n（已存到 ~/Library/Application Support/relais-local/human.txt）\n$WHERE"
 else
-  dialog "升级完成。控制台：$BASE\n账号：hou（密码见 ~/Library/Application Support/relais-local/human.txt）"
+  dialog "升级完成。控制台：$BASE\n账号：hou（密码见 ~/Library/Application Support/relais-local/human.txt）\n$WHERE"
 fi
 open "$BASE"

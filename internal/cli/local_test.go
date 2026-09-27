@@ -210,6 +210,9 @@ func TestLocalBootstrapCommandJSON(t *testing.T) {
 	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &res); err != nil || res.BaseURL != "http://127.0.0.1:18098" || res.HumanUser != "hou" || !res.PasswordShown || res.HumanPassword == "" {
 		t.Fatalf("bootstrap --json 输出错: %q %v", out, err)
 	}
+	if n := strings.Count(strings.TrimSpace(out), "\n"); n != 0 {
+		t.Fatalf("bootstrap --json 的 stdout 应恰好一行: %q", out)
+	}
 	if _, err := os.Stat(filepath.Join(ld, "sides", "codex", "hooks", "auto-reply.sh")); err != nil {
 		t.Fatal("bootstrap 应生成两侧 hook")
 	}
@@ -222,5 +225,20 @@ func TestLocalBootstrapCommandJSON(t *testing.T) {
 	}
 	if err := RunLocal([]string{"bootstrap", "--claude", "/bin/echo", "--codex", "/nonexistent", "--no-service"}); err == nil || !strings.Contains(err.Error(), "codex") {
 		t.Fatalf("codex 路径无效应报错: %v", err)
+	}
+}
+
+func TestPrintBootstrapJSONOneLine(t *testing.T) {
+	var b strings.Builder
+	if err := printBootstrapJSON(&b, bootstrapResult{BaseURL: "http://127.0.0.1:8080", HumanUser: "hou", HumanPassword: "pw", PasswordShown: true}); err != nil {
+		t.Fatal(err)
+	}
+	out := b.String()
+	if strings.Count(out, "\n") != 1 || !strings.HasSuffix(out, "\n") {
+		t.Fatalf("应恰好一行: %q", out)
+	}
+	var m map[string]any
+	if err := json.Unmarshal([]byte(out), &m); err != nil || len(m) != 4 || m["password_shown"] != true || m["base_url"] != "http://127.0.0.1:8080" {
+		t.Fatalf("JSON 键不对: %q %v", out, err)
 	}
 }
