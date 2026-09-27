@@ -18,9 +18,9 @@ func TestProtocolTextIsTransportOnly(t *testing.T) {
 			t.Fatalf("协议缺 %q", must)
 		}
 	}
-	for _, forbidden := range []string{"背景", "观点", "问题清单", "工程附录", "http://", "https://"} {
+	for _, forbidden := range []string{"背景", "观点", "问题清单", "工程附录", "http://", "https://", "接入后不用再做别的"} {
 		if strings.Contains(s, forbidden) {
-			t.Fatalf("协议不该含内容层/外链词 %q", forbidden)
+			t.Fatalf("协议不该含内容层/外链词/矛盾表述 %q", forbidden)
 		}
 	}
 	for i, h := range []string{"## 1", "## 2", "## 3", "## 4", "## 5", "## 6", "## 7", "## 8"} {
