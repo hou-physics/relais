@@ -20,6 +20,8 @@ type ServerConfig struct {
 	Listen  string `toml:"listen"`
 	DataDir string `toml:"data_dir"`
 	BaseURL string `toml:"base_url"`
+	// LocalDir：本地模式的配置根目录（M8；联网部署留空）。
+	LocalDir string `toml:"local_dir"`
 }
 
 func loadServerConfig(path string) (*ServerConfig, error) {

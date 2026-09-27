@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"time"
 
@@ -92,152 +91,33 @@ func runLocalInit(args []string) error {
 		}
 	}
 	root, _ = filepath.Abs(root)
-	if !isLoopbackListen(*listen) {
-		return fmt.Errorf("本地模式只允许监听回环地址，得到 %q", *listen)
-	}
-	agents := map[string]string{"claude": *claudePath, "codex": *codexPath}
-	for name, p := range agents {
-		if p == "" {
-			p, _ = exec.LookPath(name)
-		}
-		if p == "" {
-			return fmt.Errorf("没找到 %s：请用 --%s <路径> 指定（Codex 常在 ~/.codex/plugins/.plugin-appserver/codex）", name, name)
-		}
-		if st, err := os.Stat(p); err != nil || st.IsDir() {
-			return fmt.Errorf("%s 路径 %q 不存在或不是文件", name, p)
-		}
-		agents[name], _ = filepath.Abs(p)
-	}
 	ld, err := localDir()
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(ld, 0o700); err != nil {
-		return err
+	mgr := newLocalManager(ld)
+	claudeP, codexP := *claudePath, *codexPath
+	if claudeP == "" {
+		claudeP, _ = exec.LookPath("claude")
 	}
-	// 1) server.toml
-	scPath := localServerConfigPath(ld)
-	baseURL := "http://" + *listen
-	if _, err := os.Stat(scPath); os.IsNotExist(err) {
-		sc := fmt.Sprintf("listen = %q\ndata_dir = %q\nbase_url = %q\n", *listen, filepath.Join(ld, "data"), baseURL)
-		if err := os.WriteFile(scPath, []byte(sc), 0o600); err != nil {
-			return err
-		}
+	if codexP == "" {
+		codexP, _ = exec.LookPath("codex")
 	}
-	st, cfg, err := openServerStore(scPath)
+	res, err := mgr.bootstrap(*listen, claudeP, codexP)
 	if err != nil {
 		return err
 	}
-	defer st.Close()
-	// 已有的 server.toml 同样必须只监听回环（spec §11 安全不变量），不能因"已存在就不写"而绕过
-	if !isLoopbackListen(cfg.Listen) {
-		return fmt.Errorf("%s 里的 listen = %q 不是回环地址；本地模式只允许 127.0.0.1/localhost，请改正后重跑", scPath, cfg.Listen)
-	}
-	baseURL = cfg.BaseURL
-	// 2) 身份
-	ensureUser := func(name, display string, admin bool) (*store.User, error) {
-		u, err := st.UserByName(name)
-		if err == nil {
-			return u, nil
-		}
-		pw := newPassword()
-		u, err = st.CreateUser(name, display, pw)
-		if err != nil {
-			return nil, err
-		}
-		if admin {
-			if err := st.SetAdmin(u.ID, true); err != nil {
-				return nil, err
-			}
-			note := fmt.Sprintf("网页 %s 登录账号: %s\n初始密码: %s\n（本文件仅首次创建时写入；改密码后可删）\n", baseURL, name, pw)
-			if err := os.WriteFile(filepath.Join(ld, "human.txt"), []byte(note), 0o600); err != nil {
-				return nil, err
-			}
-			fmt.Print(note)
-		}
-		return u, nil
-	}
-	claudeU, err := ensureUser("claude", "Claude 侧", false)
-	if err != nil {
-		return err
-	}
-	codexU, err := ensureUser("codex", "Codex 侧", false)
-	if err != nil {
-		return err
-	}
-	humanU, err := ensureUser(localHuman, "Hou", true)
-	if err != nil {
-		return err
-	}
-	humanU, _ = st.UserByName(localHuman) // 取回 is_admin
-	// 3) 两侧配置目录 + hook
-	sides := map[string]*store.User{"claude": claudeU, "codex": codexU}
-	for side, u := range sides {
-		d := filepath.Join(ld, "sides", side)
-		if err := saveGlobalTo(d, &GlobalConfig{Server: baseURL, Token: u.AgentToken, Username: side}); err != nil {
-			return err
-		}
-		info := SetupInfo{OS: runtime.GOOS, Agent: side, AgentPath: agents[side], Mode: "auto"}
-		hp, err := writeLocalHook(d, info)
-		if err != nil {
-			return err
-		}
-		info.HookPath = hp
-		if err := saveSetupTo(d, info); err != nil {
-			return err
-		}
-	}
-	// 4) 频道 + 项目绑定
-	defaultMode, _ := st.GetSetting("local.default_mode")
-	if defaultMode == "" {
-		defaultMode = "supervised"
-		_ = st.SetSetting("local.default_mode", defaultMode)
+	if res.PasswordShown {
+		fmt.Printf("网页 %s 登录账号: %s\n初始密码: %s（已存到 %s）\n", res.BaseURL, res.HumanUser, res.HumanPassword, shq(filepath.Join(ld, "human.txt")))
 	}
 	for _, m := range modules {
-		ch, err := st.ChannelByName(m)
-		if err != nil {
-			if ch, err = st.CreateChannel(m); err != nil {
-				return err
-			}
-		}
-		for _, u := range []*store.User{claudeU, codexU, humanU} {
-			if ok, _ := st.IsMember(ch.ID, u.ID); !ok {
-				if err := st.AddMember(ch.ID, u.ID); err != nil {
-					return err
-				}
-			}
-		}
-		if a, _ := st.GetAuto(ch.ID); !a.Enabled {
-			if err := st.SetAutoEnabled(ch.ID, true, 16); err != nil { // 16 条 = 8 回合（D39）
-				return err
-			}
-			if err := st.SetMode(ch.ID, defaultMode); err != nil {
-				return err
-			}
-		}
-		for side := range sides {
-			if err := registerProjectIn(filepath.Join(ld, "sides", side), m, root); err != nil {
-				return err
-			}
-		}
-	}
-	// 项目目录只绑一次（默认频道 = 第一个模块；其余模块靠 RELAIS_CHANNEL）；已绑过则不覆盖
-	if _, err := os.Stat(filepath.Join(root, "relais", "config.toml")); os.IsNotExist(err) {
-		if _, err := initProject(root, baseURL, modules[0], "claude"); err != nil {
-			return err
-		}
-	} else {
-		for _, sub := range []string{"conclusions"} {
-			os.MkdirAll(filepath.Join(root, "relais", sub), 0o755)
-		}
-	}
-	rules := filepath.Join(root, "relais", "RULES.md")
-	if _, err := os.Stat(rules); os.IsNotExist(err) {
-		if err := os.WriteFile(rules, []byte(rulesTemplate), 0o644); err != nil {
+		if _, err := mgr.CreateModule(m, root); err != nil {
 			return err
 		}
 	}
-	// 5) 常驻：serve + 两个 bridge（spec §3.1：已在跑则跳过——plist 已存在就不重装、不重载）
+	baseURL := res.BaseURL
+	scPath := localServerConfigPath(ld)
+	// 常驻：serve + 两个 bridge（spec §3.1：已在跑则跳过——plist 已存在就不重装、不重载）
 	if !*noService {
 		relais, _ := os.Executable()
 		type svc struct {
@@ -317,71 +197,48 @@ func waitListen(addr string, d time.Duration) {
 }
 
 func runLocalStatus() error {
-	st, cfg, ld, err := openLocalStore()
+	ld, err := localDir()
+	if err != nil {
+		return err
+	}
+	cfg, err := loadServerConfig(localServerConfigPath(ld))
 	if err != nil {
 		return fmt.Errorf("本地模式未初始化？%w", err)
 	}
-	defer st.Close()
+	mods, err := newLocalManager(ld).ListModules()
+	if err != nil {
+		return err
+	}
 	up := "未响应"
 	if c, err := net.DialTimeout("tcp", cfg.Listen, 300*time.Millisecond); err == nil {
 		c.Close()
 		up = "在跑"
 	}
 	fmt.Printf("本地服务器 %s：%s（%s）\n", cfg.Listen, up, ld)
-	chs, err := st.AllChannels()
-	if err != nil {
-		return err
-	}
-	for _, c := range chs {
-		ch, _ := st.ChannelByName(c.Name)
-		a, _ := st.GetAuto(ch.ID)
-		if !a.Enabled && !a.Closed {
-			continue // 非本地模式频道不显示
-		}
-		state := "运行"
-		switch {
-		case a.Closed:
-			state = "已关闭"
-		case a.KickedOff:
-			state = "已开工"
-		case a.Resolved:
-			state = "已握手待确认"
-		case a.NeedsHumanQ != "":
-			state = "等你：" + a.NeedsHumanQ
-		case a.Paused:
-			state = "已暂停"
-		}
+	for _, md := range mods {
+		state := map[string]string{"running": "运行", "closed": "已关闭", "kicked_off": "已开工",
+			"resolved": "已握手待确认", "needs_human": "等你：" + md.NeedsHumanQ, "paused": "已暂停"}[md.State]
 		sids := ""
 		for _, side := range []string{"claude", "codex"} {
-			id, _ := sessionGet(filepath.Join(ld, "sides", side), c.Name)
+			id, _ := sessionGet(filepath.Join(ld, "sides", side), md.Name)
 			if id != "" {
 				sids += side + "✓ "
 			} else {
 				sids += side + "– "
 			}
 		}
-		fmt.Printf("  %-16s %-10s 第 %d/%d 回合  %s  会话 %s\n", c.Name, a.Mode, store.Round(a.RoundCount), store.Round(a.Cap), state, sids)
+		fmt.Printf("  %-16s %-10s 第 %d/%d 回合  %s  会话 %s\n", md.Name, md.Mode, md.Round, md.RoundCap, state, sids)
 	}
 	return nil
 }
 
 func runLocalClose(channel string) error {
-	st, _, ld, err := openLocalStore()
+	ld, err := localDir()
 	if err != nil {
 		return err
 	}
-	defer st.Close()
-	ch, err := st.ChannelByName(channel)
-	if err != nil {
-		return fmt.Errorf("频道 %q 不存在", channel)
-	}
-	if err := st.CloseChannel(ch.ID); err != nil {
+	if err := newLocalManager(ld).CloseModule(channel); err != nil {
 		return err
-	}
-	for _, side := range []string{"claude", "codex"} {
-		if err := sessionClear(filepath.Join(ld, "sides", side), channel); err != nil {
-			return err
-		}
 	}
 	fmt.Printf("频道 %q 已归档：循环停止、两侧讨论会话作废；消息与文件保留。\n", channel)
 	return nil

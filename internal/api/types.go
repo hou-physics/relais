@@ -169,3 +169,39 @@ type TurnResponse struct {
 type GuidanceResponse struct {
 	Note string `json:"note"`
 }
+
+// 本地控制台（M8）DTO。
+
+type LocalRepo struct {
+	Dir        string    `json:"dir"`
+	Name       string    `json:"name"`
+	ModifiedAt time.Time `json:"modified_at"`
+}
+
+type LocalModule struct {
+	Name          string               `json:"name"`
+	Dir           string               `json:"dir"`
+	Mode          string               `json:"mode"`
+	Round         int                  `json:"round"`
+	RoundCap      int                  `json:"round_cap"`
+	State         string               `json:"state"` // running|paused|needs_human|resolved|kicked_off|closed
+	NeedsHumanQ   string               `json:"needs_human_q,omitempty"`
+	Conclusions   int                  `json:"conclusions"`
+	BridgeAlive   map[string]bool      `json:"bridge_alive"`   // 由服务器填
+	LastHeartbeat map[string]time.Time `json:"last_heartbeat"` // 由服务器填
+}
+
+type LocalModuleRequest struct {
+	Name string `json:"name"`
+	Dir  string `json:"dir"`
+}
+
+type LocalRules struct {
+	Text string `json:"text"`
+}
+
+type LocalSettings struct {
+	ClaudePath  string `json:"claude_path"`
+	CodexPath   string `json:"codex_path"`
+	DefaultMode string `json:"default_mode"`
+}
