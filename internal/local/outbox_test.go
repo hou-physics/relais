@@ -96,7 +96,7 @@ func TestScanOutboxReportsBadFiles(t *testing.T) {
 	os.WriteFile(filepath.Join(md, "outbox", "claude-bad.md"), []byte("没有 frontmatter"), 0o644)
 	os.WriteFile(filepath.Join(md, "outbox", "codex-02.md"), []byte("---\nfrom: codex\nkind: letter\nsummary: s\n---\n\n正文"), 0o644)
 	items, errs := ScanOutbox(md)
-	if len(items) != 1 || items[0].From != "codex" || len(errs) != 1 || !strings.Contains(errs[0].Error(), "claude-bad.md") {
+	if len(items) != 1 || items[0].From != "codex" || len(errs) != 1 || errs[0].Name != "claude-bad.md" || !strings.Contains(errs[0].Error(), "claude-bad.md") {
 		t.Fatalf("items=%+v errs=%v", items, errs)
 	}
 }

@@ -17,6 +17,7 @@ type Letter struct {
 	Module  string    `yaml:"module"`
 	Seq     int       `yaml:"seq"`
 	From    string    `yaml:"from"`
+	To      []string  `yaml:"to,omitempty"`
 	Date    time.Time `yaml:"date"`
 	Kind    string    `yaml:"kind"`
 	ReplyTo int       `yaml:"reply_to,omitempty"`

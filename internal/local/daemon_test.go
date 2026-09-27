@@ -234,3 +234,146 @@ func TestDaemonNotifyEveryLetter(t *testing.T) {
 		t.Fatalf("应通知每封信，未见含“第 1 封”的通知: %v", f.notes)
 	}
 }
+
+// --- 修复轮 1（code review 发现）---
+
+// F1：syncAttach 不该在没有新 attach 的每一轮都把 codex_delivery_error 清掉。
+// DB 存 codex_attached_at 是秒精度，.attach-codex 的 At 若不截到秒比较，
+// a.At.After(prev) 会永远为真。
+func TestDaemonSyncAttachDoesNotWipeDeliveryError(t *testing.T) {
+	f := newFixture(t)
+	WriteAttach(f.md, Attach{ThreadID: "t-1", Name: "对话", At: time.Now()})
+	t.Setenv("FAKE_CODEX_FAIL", "1")
+	f.post(t, "claude", "x\n", PostOpts{})
+	f.d.RunOnce()
+	m, _ := f.st.LocalModuleByName("m")
+	if !strings.Contains(m.CodexDeliveryError, "boom") {
+		t.Fatalf("首次投递失败应记 boom: %+v", m)
+	}
+	// 再跑一轮：没有新的 outbox/归档，唯一起作用的是 syncAttach；attach 文件没变，
+	// 不该重新 SetCodexAttach，更不该顺带清掉上面记的错误。
+	f.d.RunOnce()
+	m, _ = f.st.LocalModuleByName("m")
+	if !strings.Contains(m.CodexDeliveryError, "boom") {
+		t.Fatalf("没有新 attach 时不该清掉投递错误: %+v", m)
+	}
+}
+
+// F2：outbox 文件的删除挪到所有副作用之后；重放（同一 IdemKey 再次入库，因为上一轮
+// 后续步骤失败导致文件没删掉）时不应重复计回合、不应产生第二条消息。
+func TestDaemonIngestReplaySkipsTurnCountAndDedups(t *testing.T) {
+	f := newFixture(t)
+	draft := filepath.Join(f.md, "drafts", "claude.md")
+	os.WriteFile(draft, []byte("x\n"), 0o644)
+	outPath, err := Post(f.md, "claude", draft, PostOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.d.RunOnce()
+	if a, _ := f.st.GetAuto(f.chID); a.RoundCount != 1 {
+		t.Fatalf("首次入库应计 1 回合: %d", a.RoundCount)
+	}
+	if _, err := os.Stat(outPath); !os.IsNotExist(err) {
+		t.Fatal("首次入库成功应清空 outbox 文件")
+	}
+	// 手工重建同名 outbox 文件，模拟"上一轮某个后续步骤失败、文件没被删"的场景
+	if err := os.WriteFile(outPath, raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	f.d.RunOnce()
+	if a, _ := f.st.GetAuto(f.chID); a.RoundCount != 1 {
+		t.Fatalf("重放不该再计回合: %d", a.RoundCount)
+	}
+	if _, err := os.Stat(outPath); !os.IsNotExist(err) {
+		t.Fatal("重放处理完也该清空 outbox 文件")
+	}
+	msgs, err := f.st.ListAfterSeq(f.chID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(msgs) != 1 {
+		t.Fatalf("重放不该重复入库，应仍只有 1 条: %d", len(msgs))
+	}
+}
+
+// F3：未知发件人/未知 kind/ack_of 找不到，跟 ScanOutbox 的解析错误一样处理：
+// 改名 .rejected、写 .rejected.txt、通知一次，不再永久卡住重试。这里用 outbox 里
+// from 既不是 claude 也不是 codex 的文件触发（ScanOutbox 层面就会拒收）。
+func TestDaemonIngestRejectsUnknownSender(t *testing.T) {
+	f := newFixture(t)
+	p := filepath.Join(f.md, "outbox", "kimi-x.md")
+	if err := os.WriteFile(p, RenderLetter(Letter{From: "kimi", Kind: "letter", Summary: "s"}, "正文\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	f.d.RunOnce()
+	if _, err := os.Stat(p + ".rejected"); err != nil {
+		t.Fatal("未知发件人应改名 .rejected")
+	}
+	data, err := os.ReadFile(p + ".rejected.txt")
+	if err != nil || !strings.Contains(string(data), "发件人") {
+		t.Fatalf("原因应提到“发件人”: %q %v", data, err)
+	}
+	found := false
+	for _, n := range f.notes {
+		if strings.Contains(n, "发件人") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("应通知一次: %v", f.notes)
+	}
+}
+
+// F4：只投给信封 to 里点了名的一侧；雇主只写给 claude 的悄悄话不该被塞进 Codex 对话。
+func TestDaemonSkipsCodexWhenNotAddressed(t *testing.T) {
+	f := newFixture(t)
+	WriteAttach(f.md, Attach{ThreadID: "t-1", At: time.Now()})
+	f.post(t, "claude", "第一封\n", PostOpts{})
+	f.d.RunOnce()
+	before, err := os.ReadFile(f.codex)
+	if err != nil {
+		t.Fatal(err)
+	}
+	users := f.d.Users
+	f.st.SaveMessage(f.chID, users["hou"], []int64{users["claude"]}, "仅抄送 claude", "私下说一句\n", "")
+	f.d.RunOnce()
+	if _, err := os.Stat(filepath.Join(f.md, "002-hou.md")); err != nil {
+		t.Fatal("应归档 002-hou.md")
+	}
+	after, err := os.ReadFile(f.codex)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(before) {
+		t.Fatalf("未指名 codex 的信不该投给 codex: %q -> %q", before, after)
+	}
+}
+
+// minor (b)：deliverCodex 读不到/解析不了归档文件时应算投递失败，不该拿空正文当真投出去。
+// 注：黑盒测试很难在不改内部结构的前提下稳定制造"文件在 ListLetters 扫描之后、
+// deliverCodex 内部第二次读取之前"这个极窄的竞态窗口——文件若已经不存在或解析不了，
+// ListLetters/Redeliver 会在选目标那一步就把它过滤掉，走到 "没有需要投给 Codex 的信"
+// 这条更早的错误分支，不会进入 deliverCodex。这里改成直接测 Redeliver 在归档文件缺失
+// 时给出的错误足够明确（不会假装投递成功），deliverCodex 内部 fail() 分支本身已经过
+// 人工审查确认（daemon.go 里 os.ReadFile/ParseLetter 出错都走 fail(...)，不再吞错拿空
+// 正文接着投）。
+func TestDaemonRedeliverErrorsClearlyWhenNothingToDeliver(t *testing.T) {
+	f := newFixture(t)
+	WriteAttach(f.md, Attach{ThreadID: "t-1", At: time.Now()})
+	f.post(t, "claude", "x\n", PostOpts{})
+	f.d.RunOnce()
+	if err := os.Remove(filepath.Join(f.md, "001-claude.md")); err != nil {
+		t.Fatal(err)
+	}
+	err := f.d.Redeliver(f.chID)
+	if err == nil {
+		t.Fatal("归档文件缺失应报错，不能假装投递成功")
+	}
+	if !strings.Contains(err.Error(), "没有需要投给 Codex 的信") {
+		t.Fatalf("错误应说明白没有可投的信: %v", err)
+	}
+}

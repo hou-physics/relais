@@ -168,3 +168,24 @@ func TestSetCapAndMaxSeq(t *testing.T) {
 		t.Fatalf("SetCap 插入分支不应启用自动模式: %+v %v", a, err)
 	}
 }
+
+func TestSentKeyExists(t *testing.T) {
+	st, ch, us := openLocalTest(t)
+	if ok, err := st.SentKeyExists(ch.ID, "outbox:x"); err != nil || ok {
+		t.Fatalf("落库前应为 false: %v %v", ok, err)
+	}
+	if _, err := st.SaveMessageOpts(ch.ID, us["claude"].ID, []int64{us["codex"].ID}, "s", "b", "", SaveOpts{IdemKey: "outbox:x"}); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := st.SentKeyExists(ch.ID, "outbox:x"); err != nil || !ok {
+		t.Fatalf("落库后应为 true: %v %v", ok, err)
+	}
+	if ok, err := st.SentKeyExists(ch.ID, "outbox:other"); err != nil || ok {
+		t.Fatalf("别的 key 不该命中: %v %v", ok, err)
+	}
+	// 别的频道即使用同一个 key 也不该命中（key 按 channel_id 隔离）
+	ch2, _ := st.CreateChannel("other")
+	if ok, err := st.SentKeyExists(ch2.ID, "outbox:x"); err != nil || ok {
+		t.Fatalf("别的频道不该命中: %v %v", ok, err)
+	}
+}

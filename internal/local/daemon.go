@@ -9,7 +9,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/hou-physics/relais/internal/store"
@@ -33,6 +35,10 @@ type Daemon struct {
 	// NotifyEveryLetter：非 nil 且返回 true 时，archive 每落盘一封非 kickoff、非
 	// relais 发件的信都额外通知一次（控制者裁决 M9 Task 7 #1）。nil 视为 false。
 	NotifyEveryLetter func() bool
+
+	// mu：串行化 RunOnce 与 Redeliver（修复轮 1 裁决 c）——两者都会读写同一模块的
+	// outbox/归档文件与登记表，并发跑会互相踩脚。
+	mu sync.Mutex
 }
 
 func (d *Daemon) log() *slog.Logger {
@@ -66,6 +72,8 @@ func (d *Daemon) Run(ctx context.Context) {
 }
 
 func (d *Daemon) RunOnce() error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
 	mods, err := d.Modules()
 	if err != nil {
 		return err
@@ -103,8 +111,12 @@ func (d *Daemon) syncAttach(m ModuleRef, md string) {
 		return
 	}
 	prev, _ := time.Parse(time.RFC3339, lm.CodexAttachedAt)
-	if lm.CodexThreadID != a.ThreadID || a.At.After(prev) {
-		_ = d.Store.SetCodexAttach(m.ChannelID, a.ThreadID, a.Name, a.At.UTC().Format(time.RFC3339))
+	// DB 里的 codex_attached_at 是 RFC3339（秒精度），.attach-codex 的 At 有亚秒精度；
+	// 不截到秒比较的话 a.At.After(prev) 永远为真，会让 SetCodexAttach 每 2s 跑一次，
+	// 顺带清掉 codex_delivery_error（见 SetCodexAttach 实现）。截到秒再比（修复轮 1 F1）。
+	at := a.At.UTC().Truncate(time.Second)
+	if a.ThreadID != lm.CodexThreadID || at.After(prev) {
+		_ = d.Store.SetCodexAttach(m.ChannelID, a.ThreadID, a.Name, at.Format(time.RFC3339))
 	}
 }
 
@@ -119,13 +131,7 @@ func otherSide(side string) string {
 func (d *Daemon) ingest(m ModuleRef, md string) error {
 	items, errs := ScanOutbox(md)
 	for _, e := range errs {
-		name := strings.SplitN(e.Error(), ":", 2)[0]
-		p := filepath.Join(md, "outbox", name)
-		if _, err := os.Stat(p); err == nil {
-			_ = os.Rename(p, p+".rejected")
-			_ = os.WriteFile(p+".rejected.txt", []byte(e.Error()+"\n"), 0o644)
-			d.notify("Relais · "+m.Name, "outbox 里有一封信读不了："+e.Error())
-		}
+		_ = d.rejectOutbox(m, filepath.Join(md, "outbox", e.Name), e.Err.Error())
 	}
 	var first error
 	for _, it := range items {
@@ -139,10 +145,24 @@ func (d *Daemon) ingest(m ModuleRef, md string) error {
 	return first
 }
 
+// rejectOutbox：outbox 里读不了/存不了的信，改名 <name>.rejected，附 <name>.rejected.txt
+// 写明原因，通知一次；总是返回 nil——这类信是「永久性存不下去」，不该在下一轮重试
+// （修复轮 1 F3，从 ingest 的 ScanOutbox 错误处理与 ingestOne 的未知发件人/未知
+// kind/ack_of 找不到三处共用）。
+func (d *Daemon) rejectOutbox(m ModuleRef, path, reason string) error {
+	if _, err := os.Stat(path); err != nil {
+		return nil
+	}
+	_ = os.Rename(path, path+".rejected")
+	_ = os.WriteFile(path+".rejected.txt", []byte(reason+"\n"), 0o644)
+	d.notify("Relais · "+m.Name, "outbox 里有一封信读不了："+reason)
+	return nil
+}
+
 func (d *Daemon) ingestOne(m ModuleRef, md string, it OutboxItem) error {
 	senderID, ok := d.Users[it.From]
 	if !ok {
-		return fmt.Errorf("未知发件人 %q", it.From)
+		return d.rejectOutbox(m, it.Path, fmt.Sprintf("未知发件人 %q", it.From))
 	}
 	to := []int64{d.Users[otherSide(it.From)], d.Users["hou"]}
 	opts := store.SaveOpts{IdemKey: "outbox:" + it.Key}
@@ -152,21 +172,29 @@ func (d *Daemon) ingestOne(m ModuleRef, md string, it OutboxItem) error {
 		if it.AckOf > 0 {
 			id, err := d.Store.MessageIDBySeq(m.ChannelID, it.AckOf)
 			if err != nil {
-				return fmt.Errorf("ack_of 指向的第 %d 封不存在", it.AckOf)
+				return d.rejectOutbox(m, it.Path, fmt.Sprintf("ack_of 指向的第 %d 封不存在", it.AckOf))
 			}
 			opts.AckOf = id
 		}
 	case "needs-human", "letter", "":
 	default:
-		return fmt.Errorf("outbox 信的 kind %q 不认识", it.Kind)
+		return d.rejectOutbox(m, it.Path, fmt.Sprintf("outbox 信的 kind %q 不认识", it.Kind))
 	}
+
+	// replay：这个 IdemKey 在之前某一轮已经落过库——说明上一轮 SaveMessageOpts 之后的
+	// 某个步骤失败了，文件才没被删掉留到这一轮重试。重放时后续副作用大多是幂等的
+	// （ClearKickedOff/EvaluateHandshake/GetMessage 都是），但 CountLocalTurn 会重复
+	// 计回合，必须跳过（修复轮 1 F2）。
+	replay, err := d.Store.SentKeyExists(m.ChannelID, opts.IdemKey)
+	if err != nil {
+		return err
+	}
+
 	msg, err := d.Store.SaveMessageOpts(m.ChannelID, senderID, to, it.Summary, it.Body, "", opts)
 	if err != nil {
 		return err
 	}
-	if err := os.Remove(it.Path); err != nil && !os.IsNotExist(err) {
-		return err
-	}
+
 	switch it.Kind {
 	case "needs-human":
 		_ = d.Store.SetNeedsHuman(m.ChannelID, it.Summary)
@@ -181,7 +209,11 @@ func (d *Daemon) ingestOne(m ModuleRef, md string, it OutboxItem) error {
 			d.notify("Relais · "+m.Name, "两侧提名的承接方不一致，请到控制台定")
 		case store.HandshakeDone:
 			if a, err := d.Store.GetAuto(m.ChannelID); err == nil && a.Mode == "autopilot" {
-				if k, err := d.Store.Kickoff(m.ChannelID, d.Users["hou"]); err == nil && d.Publish != nil {
+				k, err := d.Store.Kickoff(m.ChannelID, d.Users["hou"])
+				if err != nil {
+					d.log().Warn("自动开工失败", "module", m.Name, "err", err)
+					d.notify("Relais · "+m.Name, "已握手但自动开工失败："+err.Error())
+				} else if d.Publish != nil {
 					d.Publish(m.ChannelID, k, m.Name)
 				}
 			} else {
@@ -191,17 +223,26 @@ func (d *Daemon) ingestOne(m ModuleRef, md string, it OutboxItem) error {
 				msg = cm
 			}
 		}
-		if hit, _ := d.Store.CountLocalTurn(m.ChannelID); hit {
-			d.notify("Relais · "+m.Name, "回合到上限了，去控制台决定继续还是收")
+		if !replay {
+			if hit, _ := d.Store.CountLocalTurn(m.ChannelID); hit {
+				d.notify("Relais · "+m.Name, "回合到上限了，去控制台决定继续还是收")
+			}
 		}
 	default:
 		_ = d.Store.ClearKickedOff(m.ChannelID)
-		if hit, _ := d.Store.CountLocalTurn(m.ChannelID); hit {
-			d.notify("Relais · "+m.Name, "回合到上限了，去控制台决定继续还是收")
+		if !replay {
+			if hit, _ := d.Store.CountLocalTurn(m.ChannelID); hit {
+				d.notify("Relais · "+m.Name, "回合到上限了，去控制台决定继续还是收")
+			}
 		}
 	}
 	if d.Publish != nil {
 		d.Publish(m.ChannelID, msg, m.Name)
+	}
+	// 文件删除放最后：前面任何一步出错都会提前 return，把文件留下，下一轮重试
+	// （修复轮 1 F2）。
+	if err := os.Remove(it.Path); err != nil && !os.IsNotExist(err) {
+		return err
 	}
 	return nil
 }
@@ -227,7 +268,7 @@ func (d *Daemon) archive(m ModuleRef, md string) ([]Letter, error) {
 	var fresh []Letter
 	prior, _ := ListLetters(md)
 	for _, msg := range msgs {
-		l := Letter{ID: msg.ID, Module: m.Name, Seq: msg.Seq, From: msg.Sender, Date: msg.CreatedAt, Kind: msg.Kind, Owner: msg.Owner, Summary: msg.Summary}
+		l := Letter{ID: msg.ID, Module: m.Name, Seq: msg.Seq, From: msg.Sender, To: msg.To, Date: msg.CreatedAt, Kind: msg.Kind, Owner: msg.Owner, Summary: msg.Summary}
 		if l.Kind == "" {
 			l.Kind = "letter"
 		}
@@ -272,7 +313,7 @@ func (d *Daemon) archive(m ModuleRef, md string) ([]Letter, error) {
 		if err != nil {
 			return fresh, fmt.Errorf("kickoff %s 的结论不存在: %w", k.ID, err)
 		}
-		l := Letter{ID: k.ID, Module: m.Name, Seq: seq, From: "relais", Date: k.CreatedAt, Kind: "kickoff", Owner: k.Owner, Summary: k.Summary, Path: filepath.Join(md, KickoffName(seq))}
+		l := Letter{ID: k.ID, Module: m.Name, Seq: seq, From: "relais", To: k.To, Date: k.CreatedAt, Kind: "kickoff", Owner: k.Owner, Summary: k.Summary, Path: filepath.Join(md, KickoffName(seq))}
 		if err := writeAtomic(l.Path, RenderLetter(l, k.Body)); err != nil {
 			return fresh, err
 		}
@@ -292,17 +333,21 @@ func DeliveryText(module string, l Letter, body string, prior []Letter) string {
 		return head + desc
 	}
 	if l.From == "hou" {
-		return head + "雇主的信，" + strings.TrimPrefix(desc, "") + "\n读它，按 relais/PROTOCOL.md 处理。"
+		// desc（Describe）本身已经带了「雇主的信，由谁先回」那行，这里不再重复加前缀
+		// （修复轮 1 minor a：原先的 "雇主的信，"+desc 会把这句话说两遍）。
+		return head + desc + "\n读它，按 relais/PROTOCOL.md 处理。"
 	}
 	return head + desc + "\n读它，按 relais/PROTOCOL.md 回信。"
 }
 
-// deliver：spec §7.3。claude 侧靠门铃，只记一笔；codex 侧 queue。
+// deliver：spec §7.3。claude 侧靠门铃，只记一笔；codex 侧 queue。只投给信封 to 里
+// 点了名的一侧（kickoff 例外，一律投两侧）——修复轮 1 F4：以前不管 to 是谁都投 codex，
+// 雇主只想跟 claude 说的悄悄话也会被塞进 Codex 对话。
 func (d *Daemon) deliver(m ModuleRef, md string, l Letter) error {
-	if l.Kind != "kickoff" && l.From != "codex" {
+	if l.Kind == "kickoff" || slices.Contains(l.To, "claude") {
 		_ = d.Store.RecordDelivery(l.ID, "claude", "ok", "")
 	}
-	if l.From == "codex" {
+	if l.Kind != "kickoff" && !slices.Contains(l.To, "codex") {
 		return nil
 	}
 	return d.deliverCodex(m, md, l)
@@ -326,8 +371,14 @@ func (d *Daemon) deliverCodex(m ModuleRef, md string, l Letter) error {
 	if codex == "" {
 		return fail("未设置 codex 命令路径（控制台 → 设置）")
 	}
-	data, _ := os.ReadFile(l.Path)
-	_, body, _ := ParseLetter(data)
+	data, err := os.ReadFile(l.Path)
+	if err != nil {
+		return fail("读不到归档信 " + l.Path + "：" + err.Error())
+	}
+	_, body, err := ParseLetter(data)
+	if err != nil {
+		return fail("归档信解析失败 " + l.Path + "：" + err.Error())
+	}
 	all, _ := ListLetters(md)
 	var prior []Letter
 	for _, p := range all {
@@ -362,6 +413,8 @@ func (d *Daemon) deliverCodex(m ModuleRef, md string, l Letter) error {
 
 // Redeliver：对最后一封应投给 codex 的信（最新的非 codex 归档信或 kickoff）重跑投递。
 func (d *Daemon) Redeliver(channelID int64) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
 	mods, err := d.Modules()
 	if err != nil {
 		return err

@@ -83,14 +83,23 @@ type OutboxItem struct {
 	Body                                  string
 }
 
+// OutboxError：ScanOutbox 读不了/解析不了的文件，携带文件名以便调用方精确改名（不必再从
+// Error() 文本里 split 出文件名，见 M9 Task 7 修复轮 1 F3）。
+type OutboxError struct {
+	Name string
+	Err  error
+}
+
+func (e OutboxError) Error() string { return e.Name + ": " + e.Err.Error() }
+
 // ScanOutbox：守卫每轮调用；只看 *.md（.tmp 是 Post 写到一半的）。
-func ScanOutbox(mailDir string) ([]OutboxItem, []error) {
+func ScanOutbox(mailDir string) ([]OutboxItem, []OutboxError) {
 	entries, err := os.ReadDir(filepath.Join(mailDir, "outbox"))
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
 		}
-		return nil, []error{err}
+		return nil, []OutboxError{{Name: "outbox", Err: err}}
 	}
 	var names []string
 	for _, e := range entries {
@@ -100,20 +109,20 @@ func ScanOutbox(mailDir string) ([]OutboxItem, []error) {
 	}
 	sort.Strings(names)
 	var items []OutboxItem
-	var errs []error
+	var errs []OutboxError
 	for _, n := range names {
 		p := filepath.Join(mailDir, "outbox", n)
 		data, err := os.ReadFile(p)
 		if err != nil {
-			errs = append(errs, fmt.Errorf("%s: %w", n, err))
+			errs = append(errs, OutboxError{Name: n, Err: err})
 			continue
 		}
 		l, body, err := ParseLetter(data)
 		if err != nil || (l.From != "claude" && l.From != "codex") {
 			if err == nil {
-				err = fmt.Errorf("from 必须是 claude 或 codex")
+				err = fmt.Errorf("发件人必须是 claude 或 codex")
 			}
-			errs = append(errs, fmt.Errorf("%s: %w", n, err))
+			errs = append(errs, OutboxError{Name: n, Err: err})
 			continue
 		}
 		if l.Kind == "" {

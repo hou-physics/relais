@@ -3,6 +3,7 @@
 package store
 
 import (
+	"database/sql"
 	"errors"
 	"fmt"
 	"strings"
@@ -145,6 +146,20 @@ func (s *Store) MessageIDBySeq(channelID int64, seq int) (string, error) {
 	var id string
 	err := s.db.QueryRow(`SELECT id FROM messages WHERE channel_id=? AND seq=?`, channelID, seq).Scan(&id)
 	return id, err
+}
+
+// SentKeyExists：outbox 幂等键是否已经落过库；供守卫判断这次入库是不是重放
+// （文件因为后续步骤失败而没被删掉，下一轮重新入库同一个 IdemKey），M9 Task 7 修复轮 1 F2。
+func (s *Store) SentKeyExists(channelID int64, key string) (bool, error) {
+	var one int
+	err := s.db.QueryRow(`SELECT 1 FROM sent_keys WHERE channel_id=? AND key=?`, channelID, key).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // CountLocalTurn：本地频道每入库一封 agent 信记一条；到上限置 needs-human（沿用 capHitQuestion 文案）。不拒收。
