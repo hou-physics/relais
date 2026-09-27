@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -242,7 +243,16 @@ func TestRunServeStartsDaemonInLocalMode(t *testing.T) {
 	if _, err := mgr.CreateModule(api.LocalModuleRequest{Name: "m", Dir: proj}); err != nil {
 		t.Fatal(err)
 	}
-	go func() { _ = RunServe([]string{"--config", localServerConfigPath(ld)}) }()
+	// 在 TempDir 之后登记：清理按 LIFO，先停服务与守卫，再删临时目录
+	ctx, cancel := context.WithCancel(context.Background())
+	served := make(chan struct{})
+	t.Cleanup(func() { cancel(); <-served })
+	go func() {
+		defer close(served)
+		if err := runServe(ctx, []string{"--config", localServerConfigPath(ld)}); err != nil {
+			t.Errorf("runServe: %v", err)
+		}
+	}()
 	waitListen("127.0.0.1:18092", 5*time.Second)
 	md := local.MailDir(proj, "m")
 	os.WriteFile(filepath.Join(md, "drafts", "a.md"), []byte("第一封\n"), 0o644)
@@ -260,8 +270,12 @@ func TestRunServeStartsDaemonInLocalMode(t *testing.T) {
 		time.Sleep(200 * time.Millisecond)
 	}
 	resp, err := http.Get("http://127.0.0.1:18092/api/local/modules")
-	if err != nil || resp.StatusCode != 200 {
-		t.Fatalf("回环免钥匙: %v", err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("回环免钥匙应 200, got %d", resp.StatusCode)
 	}
 	var mods []api.LocalModule
 	json.NewDecoder(resp.Body).Decode(&mods)

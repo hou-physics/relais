@@ -1,6 +1,10 @@
 package cli
 
-import "github.com/hou-physics/relais/internal/server"
+import (
+	"context"
+
+	"github.com/hou-physics/relais/internal/server"
+)
 
 // SaveGlobalForTest 供 e2e 测试注入身份；生产代码不得调用。
 func SaveGlobalForTest(server, token, username string) error {
@@ -20,3 +24,6 @@ func NewClientForTest() (*Client, error) {
 
 // NewLocalManagerForTest 暴露本地管理器；生产代码不得调用。
 func NewLocalManagerForTest(ld string) server.LocalManager { return newLocalManager(ld) }
+
+// RunServeCtx 暴露可用 ctx 停止的 serve；生产代码不得调用。
+func RunServeCtx(ctx context.Context, args []string) error { return runServe(ctx, args) }

@@ -4,6 +4,7 @@ package e2e
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net"
 	"net/http"
@@ -548,8 +549,16 @@ func TestAnchorM9DaemonEndToEnd(t *testing.T) {
 	if _, err := cli.NewLocalManagerForTest(ld).CreateModule(api.LocalModuleRequest{Name: "m", Dir: proj}); err != nil {
 		t.Fatal(err)
 	}
-	// RunServe 无法优雅停止——测试进程结束即释放端口；端口与其它测试错开
-	go func() { _ = cli.RunServe([]string{"--config", filepath.Join(ld, "server.toml")}) }()
+	// 在 TempDir 之后登记：清理按 LIFO，先停服务与守卫，再删临时目录；端口与其它测试错开
+	ctx, cancel := context.WithCancel(context.Background())
+	served := make(chan struct{})
+	t.Cleanup(func() { cancel(); <-served })
+	go func() {
+		defer close(served)
+		if err := cli.RunServeCtx(ctx, []string{"--config", filepath.Join(ld, "server.toml")}); err != nil {
+			t.Errorf("锚点M9-1 守卫端到端：serve 出错: %v", err)
+		}
+	}()
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		if c, err := net.DialTimeout("tcp", listen, 200*time.Millisecond); err == nil {

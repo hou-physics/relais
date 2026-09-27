@@ -51,7 +51,10 @@ func openServerStore(configPath string) (*store.Store, *ServerConfig, error) {
 	return st, cfg, err
 }
 
-func RunServe(args []string) error {
+func RunServe(args []string) error { return runServe(context.Background(), args) }
+
+// runServe：ctx 结束（或收到 SIGINT/SIGTERM）时关掉 HTTP 服务、等守卫退出后返回；测试用 ctx 停服。
+func runServe(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	configPath := fs.String("config", "/etc/relais/server.toml", "服务器配置文件")
 	if err := fs.Parse(args); err != nil {
@@ -69,6 +72,10 @@ func RunServe(args []string) error {
 	fmt.Printf("relais 服务启动: %s (base_url=%s)\n", cfg.Listen, cfg.BaseURL)
 	srv := server.New(st, cfg.BaseURL, cfg.DataDir)
 	hs := &http.Server{Addr: cfg.Listen} // Handler 须在 SetLocal 之后取，否则本地路由不注册
+	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	daemonDone := make(chan struct{})
+	close(daemonDone) // 非本地模式没有守卫，视为已结束
 	if cfg.LocalDir != "" {
 		// 同一个 mgr 既给 SetLocal 又开守卫：Redeliver 经 mgr.daemon 调用，store 句柄也共用
 		mgr := newLocalManager(cfg.LocalDir)
@@ -77,18 +84,29 @@ func RunServe(args []string) error {
 		if err != nil {
 			return err
 		}
-		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-		defer stop()
-		go d.Run(ctx)
-		// NotifyContext 接管了 SIGINT/SIGTERM 的默认退出：收到信号时由这里关掉 HTTP 服务，进程正常返回
+		defer func() {
+			if mgr.shared != nil {
+				mgr.shared.Close()
+			}
+		}()
+		daemonDone = make(chan struct{})
 		go func() {
-			<-ctx.Done()
-			hs.Close()
+			defer close(daemonDone)
+			d.Run(ctx)
 		}()
 		fmt.Printf("本地模式管理接口已启用（%s）\n守卫已启动（每 2 秒扫一次 outbox）\n", cfg.LocalDir)
 	}
+	// NotifyContext 接管了 SIGINT/SIGTERM 的默认退出：ctx 结束时关掉 HTTP 服务；随即 stop()，再按一次 Ctrl-C 走默认处理
+	go func() {
+		<-ctx.Done()
+		stop()
+		hs.Close()
+	}()
 	hs.Handler = srv.Handler()
-	if err := hs.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
+	err = hs.ListenAndServe()
+	stop() // 监听失败时也让守卫退出
+	<-daemonDone
+	if !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
 	return nil
