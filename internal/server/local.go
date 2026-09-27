@@ -68,6 +68,20 @@ func isLoopbackHost(hostport string) bool {
 	}
 }
 
+// normHostPort：小写 host:port；没写端口按 scheme 补默认端口（http 80、https 443），
+// IPv6 去掉方括号后再拼，供 Origin 与 Host 比较。
+func normHostPort(hostport, scheme string) string {
+	hostport = strings.ToLower(hostport)
+	host, port, err := net.SplitHostPort(hostport)
+	if err != nil {
+		host, port = strings.Trim(hostport, "[]"), "80"
+		if strings.ToLower(scheme) == "https" {
+			port = "443"
+		}
+	}
+	return net.JoinHostPort(host, port)
+}
+
 // loopbackBrowserOK：本地模式回环免钥匙的第二道判断，挡两类攻击——
 //  1. DNS rebinding：攻击者控制的域名先解析到真实公网 IP 通过校验，再改解析到
 //     127.0.0.1；此时 TCP 连接确实来自回环（isLoopback 为真），但请求的 Host 头
@@ -86,8 +100,10 @@ func loopbackBrowserOK(r *http.Request) (ok bool, reason string) {
 		return true, ""
 	}
 	if origin := r.Header.Get("Origin"); origin != "" {
+		// Origin 必须与 Host 同一个 host:port——回环上别的端口（本机别的开发服务器里的
+		// 网页）也不算同源（终审修复 minor）。
 		u, err := url.Parse(origin)
-		if err != nil || !isLoopbackHost(u.Host) {
+		if err != nil || !isLoopbackHost(u.Host) || normHostPort(u.Host, u.Scheme) != normHostPort(r.Host, "http") {
 			return false, "本地控制台拒绝跨站请求"
 		}
 		return true, ""

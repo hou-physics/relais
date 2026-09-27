@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"unicode"
 )
 
 func MailDir(projectDir, module string) string {
@@ -24,8 +25,18 @@ func EnsureMailDir(projectDir, module string) error {
 	return nil
 }
 
+// ValidModuleName：模块名要当目录名用：非空、无首尾空白、不含斜杠与 ..、不以 . 开头
+// （含 "."，也免得变成隐藏目录）、不含控制字符（终审修复 minor）。
 func ValidModuleName(name string) bool {
-	return name != "" && strings.TrimSpace(name) == name && !strings.Contains(name, "/") && !strings.Contains(name, "..")
+	if name == "" || strings.TrimSpace(name) != name || strings.HasPrefix(name, ".") || strings.Contains(name, "/") || strings.Contains(name, "..") {
+		return false
+	}
+	for _, r := range name {
+		if unicode.IsControl(r) {
+			return false
+		}
+	}
+	return true
 }
 
 func ListModulesIn(projectDir string) ([]string, error) {

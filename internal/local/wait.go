@@ -166,6 +166,12 @@ func Describe(l Letter, body, side string, prior []Letter) string {
 		}
 	}
 	line := fmt.Sprintf("第 %d 封 来自 %s：%s", l.Seq, l.From, l.Path)
+	switch {
+	case l.Kind == "conclusion":
+		return line + "\n这是对方的附和，已握手；不用回信，等开工通知"
+	case l.Kind == "needs-human" && l.From != "hou":
+		return line + "\n对方在等雇主定夺；不用回信"
+	}
 	if l.From == "hou" {
 		if FirstResponder(l, body, prior) == side {
 			return line + "\n雇主的信，由你先回"

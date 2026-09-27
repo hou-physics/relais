@@ -13,7 +13,7 @@ func TestProtocolTextIsTransportOnly(t *testing.T) {
 	if !strings.HasPrefix(s, ProtocolMarker) {
 		t.Fatal("应以标记开头")
 	}
-	for _, must := range []string{"relais wait", "relais attach", "relais post", "--resolved --owner", "--ack", "--needs-human", "relais/mail/", "conclusion-", "outbox", "先回", "CLAUDECODE", "不管回不回信", "否则收不到下一封"} {
+	for _, must := range []string{"relais wait", "relais attach", "relais post", "--resolved --owner", "--ack", "--needs-human", "relais/mail/", "conclusion-", "outbox", "先回", "CLAUDECODE", "不管回不回信", "否则收不到下一封", "重新运行"} {
 		if !strings.Contains(s, must) {
 			t.Fatalf("协议缺 %q", must)
 		}

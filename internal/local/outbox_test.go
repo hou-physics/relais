@@ -100,3 +100,17 @@ func TestScanOutboxReportsBadFiles(t *testing.T) {
 		t.Fatalf("items=%+v errs=%v", items, errs)
 	}
 }
+
+// 终审修复 minor：按 <side>- 后的 ULID（时间）排序，不按文件名字典序（claude < codex）。
+func TestScanOutboxOrdersByULID(t *testing.T) {
+	_, md := setupMail(t)
+	letter := func(from string) []byte {
+		return []byte("---\nfrom: " + from + "\nkind: letter\nsummary: s\n---\n\n正文")
+	}
+	os.WriteFile(filepath.Join(md, "outbox", "claude-01K2000000000000000000000B.md"), letter("claude"), 0o644)
+	os.WriteFile(filepath.Join(md, "outbox", "codex-01K2000000000000000000000A.md"), letter("codex"), 0o644)
+	items, errs := ScanOutbox(md)
+	if len(errs) != 0 || len(items) != 2 || items[0].From != "codex" || items[1].From != "claude" {
+		t.Fatalf("应先 codex（ULID 更早）: %+v %v", items, errs)
+	}
+}

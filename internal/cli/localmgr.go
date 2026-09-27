@@ -384,7 +384,7 @@ func (m *localManager) CreateModule(req api.LocalModuleRequest) (api.LocalModule
 	name, dir := req.Name, req.Dir
 	var out api.LocalModule
 	if !local.ValidModuleName(name) {
-		return out, invalid("模块名 %q 不能为空、首尾空格、含斜杠或 ..", name)
+		return out, invalid("模块名 %q 不能为空、首尾空格、以 . 开头、含斜杠、.. 或控制字符", name)
 	}
 	if !filepath.IsAbs(dir) || filepath.Clean(dir) != dir || slices.Contains(strings.Split(dir, string(filepath.Separator)), "..") {
 		return out, invalid("目录必须是绝对路径且不含 ..")
@@ -681,7 +681,7 @@ func (m *localManager) PatchModule(name string, p api.LocalModulePatch) (api.Loc
 // renameModule：频道改名 + 信箱目录跟着挪；挪目录失败时把频道名改回去。
 func renameModule(st *store.Store, lm store.LocalModule, newName string) error {
 	if !local.ValidModuleName(newName) {
-		return invalid("模块名 %q 不能为空、首尾空格、含斜杠或 ..", newName)
+		return invalid("模块名 %q 不能为空、首尾空格、以 . 开头、含斜杠、.. 或控制字符", newName)
 	}
 	oldDir, newDir := local.MailDir(lm.Dir, lm.Name), local.MailDir(lm.Dir, newName)
 	if _, err := os.Lstat(newDir); err == nil {

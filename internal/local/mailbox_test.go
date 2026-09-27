@@ -71,7 +71,7 @@ func TestValidModuleName(t *testing.T) {
 			t.Fatalf("%q 应合法", ok)
 		}
 	}
-	for _, bad := range []string{"", " x", "x ", "a/b", "..", "a..b"} {
+	for _, bad := range []string{"", " x", "x ", "a/b", "..", "a..b", ".", ".hidden", "a\x00b", "a\nb", "a\tb", "a\x7fb"} {
 		if ValidModuleName(bad) {
 			t.Fatalf("%q 应非法", bad)
 		}

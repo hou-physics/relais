@@ -444,9 +444,9 @@ func DeliveryText(module string, l Letter, body string, prior []Letter) string {
 	case "kickoff":
 		return head + desc
 	}
-	if l.From == "hou" {
-		// desc（Describe）本身已经带了「雇主的信，由谁先回」那行，这里不再重复加前缀
-		// （修复轮 1 minor a：原先的 "雇主的信，"+desc 会把这句话说两遍）。
+	if l.From == "hou" || l.Kind == "conclusion" || l.Kind == "needs-human" {
+		// desc（Describe）本身已经带了「由谁先回」/「不用回信」那行，这里不再重复，
+		// 也不能再叫它「回信」（修复轮 1 minor a；终审修复 minor：附和与 needs-human 不用回）。
 		return head + desc + "\n读它，按 relais/PROTOCOL.md 处理。"
 	}
 	return head + desc + "\n读它，按 relais/PROTOCOL.md 回信。"

@@ -134,4 +134,22 @@ func TestFirstResponderAndDescribe(t *testing.T) {
 	if !strings.Contains(d, "承接方是雇主") {
 		t.Fatalf("Describe kickoff owner=user: %q", d)
 	}
+	// 终审修复 minor：附和（conclusion）与 agent 的 needs-human 都不用回信
+	conc := Letter{Seq: 5, From: "claude", Kind: "conclusion", Owner: "codex", Path: "/p/005-claude.md"}
+	if d = Describe(conc, "", "codex", prior); !strings.Contains(d, "这是对方的附和，已握手；不用回信，等开工通知") {
+		t.Fatalf("Describe conclusion: %q", d)
+	}
+	if d = DeliveryText("m", conc, "", prior); strings.Contains(d, "回信。") || !strings.Contains(d, "不用回信") {
+		t.Fatalf("DeliveryText conclusion 不该叫它回信: %q", d)
+	}
+	nh := Letter{Seq: 6, From: "claude", Kind: "needs-human", Path: "/p/006-claude.md"}
+	if d = Describe(nh, "", "codex", prior); !strings.Contains(d, "对方在等雇主定夺；不用回信") {
+		t.Fatalf("Describe needs-human: %q", d)
+	}
+	if d = DeliveryText("m", nh, "", prior); strings.Contains(d, "回信。") {
+		t.Fatalf("DeliveryText needs-human 不该叫它回信: %q", d)
+	}
+	if d = DeliveryText("m", Letter{Seq: 7, From: "claude", Kind: "letter", Path: "/p/007-claude.md"}, "", prior); !strings.Contains(d, "按 relais/PROTOCOL.md 回信。") {
+		t.Fatalf("普通信仍应叫它回信: %q", d)
+	}
 }

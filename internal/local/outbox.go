@@ -107,7 +107,22 @@ func ScanOutbox(mailDir string) ([]OutboxItem, []OutboxError) {
 			names = append(names, e.Name())
 		}
 	}
-	sort.Strings(names)
+	// 按 <side>- 之后的 ULID 排序：两侧的信混在一起时按时间先后入库，不按侧名字典序
+	// （终审修复 minor）；ULID 相同或没有前缀时退回整名比较。
+	ulidPart := func(n string) string {
+		n = strings.TrimSuffix(n, ".md")
+		if i := strings.IndexByte(n, '-'); i >= 0 {
+			return n[i+1:]
+		}
+		return n
+	}
+	sort.Slice(names, func(i, j int) bool {
+		a, b := ulidPart(names[i]), ulidPart(names[j])
+		if a != b {
+			return a < b
+		}
+		return names[i] < names[j]
+	})
 	var items []OutboxItem
 	var errs []OutboxError
 	for _, n := range names {
