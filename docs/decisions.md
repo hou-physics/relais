@@ -24,7 +24,7 @@
   12. 终审修复：`relais wait` 收信即退出，Claude 回信期间 `waiting=false`，所以模块状态新增 `claude.cursor` 与 `claude.working`（没在 wait、但游标已读到最后一封不是 Claude 发的信即为「已收信，正在回」），控制台把 working 也算接上，不再每回合都显示「Claude 侧还没接入」。
   13. 终审修复：codex 侧投递改由「待投集合」驱动（`store.PendingCodexDeliveries`：收件人含 codex 或是 kickoff、已归档、非 codex 所发、没有 ok 投递记录），每轮按先后补投，接入前写给 Codex 的信在接入后送达、归档后投递前崩溃也不丢；失败的信 60 秒内不自动重投（遇到即停，保证不乱序），重新接入时 `SetCodexAttach` 直接删掉该频道 codex 侧的失败记录让它立刻重投（没按 `codex_attached_at > at` 比较：两者都是秒精度，同一秒内先失败后接入会漏判），自动重投再失败不重复弹通知。
   14. 终审修复：从 M8 升级（`migrateWith`）和 `CreateModule` 收编「频道已在、登记表没有」的频道时，除了 `archived_seq = MaxSeq`，还用 `store.MarkChannelDelivered` 把现有消息记为已归档（kickoff）、已投 claude/codex——kickoff 不占 seq，只靠 `archived_seq` 挡不住，否则第一轮会把历史 kickoff 全写成 `kickoff-NNN.md` 并重新叫两侧开工。
-  15. 终审修复：守卫不再每轮 `MkdirAll` 信箱目录——目录不见了就跳过该模块并记为 missing（状态变化时记一次日志，`/api/local/modules` 报 `mailbox_missing`，控制台「该你做」提示「信箱目录不见了（项目被移动或删除？）」），免得挪走/删掉的项目原地复活、改名途中留下旧名幽灵目录；新增 `Daemon.Do`，改名、删除、接入经它与 `RunOnce` 串行。
+  15. 终审修复：守卫不再每轮 `MkdirAll` 信箱目录——目录不见了就跳过该模块并记为 missing（状态变化时记一次日志，`/api/local/modules` 报 `mailbox_missing`，控制台「该你做」提示「信箱目录不见了（项目被移动或删除？）」，模块 state 不变），免得挪走/删掉的项目原地复活、改名途中留下旧名幽灵目录；新增 `Daemon.Do`，改名、删除、接入经它与 `RunOnce` 串行。
   16. 终审修复：几处小修——模块名另拒 `.`、以 `.` 开头与含控制字符的名字；投给对方的附和（`kind: conclusion`）写明「这是对方的附和，已握手；不用回信，等开工通知」、agent 发的 needs-human 写明「对方在等雇主定夺；不用回信」，通知结尾不再叫它「回信」；`ScanOutbox` 按 `<side>-` 之后的 ULID 排序，两侧的信按时间先后入库；回环免钥匙的非 GET 请求带 `Origin` 时，其 host:port（小写、缺端口按 scheme 补默认端口）必须等于 `Host`，本机别的端口上的网页也算跨站；`PROTOCOL.md` §2 claude 侧补一句 wait 报找不到模块时按错误里列出的名字重新运行（多半是模块改了名）。
 - **状态**：live（v0.7.0-m9）。
 - **反转触发**：Codex 升级改了 `queue`/`threads` 表 → Codex 侧退回门铃；Claude Code 强杀长时间后台命令 → `wait` 加超时循环。

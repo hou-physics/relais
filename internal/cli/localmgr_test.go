@@ -363,8 +363,8 @@ func TestModuleInfoReportsMailboxReadError(t *testing.T) {
 		t.Fatal("信箱读失败应报错而不是显示未接入")
 	}
 	os.Remove(md)
-	if mods, err := mgr.ListModules(); err != nil || mods[0].State != "未接入" {
-		t.Fatalf("信箱目录不在时按空信箱显示: %+v %v", mods, err)
+	if mods, err := mgr.ListModules(); err != nil || mods[0].State != "未接入" || !mods[0].MailboxMissing {
+		t.Fatalf("信箱目录不在时按空信箱显示，并报 mailbox_missing: %+v %v", mods, err)
 	}
 }
 
@@ -676,7 +676,7 @@ func TestPatchRenameWithDaemonRunning(t *testing.T) {
 	os.RemoveAll(filepath.Join(proj, "relais", "mail", "b"))
 	d.RunOnce()
 	mods, _ := mgr.ListModules()
-	if len(mods) != 1 || !mods[0].MailboxMissing || mods[0].State != "等你" {
+	if len(mods) != 1 || !mods[0].MailboxMissing {
 		t.Fatalf("信箱不见了应报 mailbox_missing: %+v", mods)
 	}
 	if _, err := os.Stat(filepath.Join(proj, "relais", "mail", "b")); !os.IsNotExist(err) {

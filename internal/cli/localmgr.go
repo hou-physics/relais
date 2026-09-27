@@ -580,7 +580,7 @@ func (m *localManager) moduleInfo(st *store.Store, lm store.LocalModule) (api.Lo
 		}
 	}
 
-	waitingYou := a.NeedsHumanQ != "" || out.Codex.DeliveryError != "" || len(out.Rejected) > 0 || out.MailboxMissing
+	waitingYou := a.NeedsHumanQ != "" || out.Codex.DeliveryError != "" || len(out.Rejected) > 0
 	switch {
 	case out.Closed:
 		out.State = "已关闭"
