@@ -130,4 +130,36 @@ func TestLoopbackWithoutKeyIsHumanOnlyInLocalMode(t *testing.T) {
 	if r.StatusCode != 200 {
 		t.Fatalf("agent token 仍有效: %d", r.StatusCode)
 	}
+	// 本地：RemoteAddr 回环，但 Host 是攻击者域名（DNS rebinding）→ 403
+	req2 := httptest.NewRequest("GET", "/api/me", nil)
+	req2.Host = "evil.com"
+	req2.RemoteAddr = "127.0.0.1:1"
+	rec2 := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec2, req2)
+	if rec2.Code != 403 {
+		t.Fatalf("Host 非回环应 403: %d", rec2.Code)
+	}
+	// 本地：回环 + 跨站 Origin 的写请求（CSRF）→ 403
+	body, _ := json.Marshal(api.LocalModuleRequest{Name: "x", Dir: "/y"})
+	req3 := httptest.NewRequest("POST", "/api/local/modules", bytes.NewReader(body))
+	req3.Host = "127.0.0.1:8080"
+	req3.RemoteAddr = "127.0.0.1:1"
+	req3.Header.Set("Content-Type", "application/json")
+	req3.Header.Set("Origin", "https://evil.com")
+	rec3 := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec3, req3)
+	if rec3.Code != 403 {
+		t.Fatalf("跨站 Origin 应 403: %d", rec3.Code)
+	}
+	// 本地：回环 + 同源 Origin 的写请求 → 不应是 403（具体 200/400 由业务逻辑决定）
+	req4 := httptest.NewRequest("POST", "/api/local/modules", bytes.NewReader(body))
+	req4.Host = "127.0.0.1:8080"
+	req4.RemoteAddr = "127.0.0.1:1"
+	req4.Header.Set("Content-Type", "application/json")
+	req4.Header.Set("Origin", "http://127.0.0.1:8080")
+	rec4 := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec4, req4)
+	if rec4.Code == 403 {
+		t.Fatalf("回环同源 Origin 不该 403: %d", rec4.Code)
+	}
 }

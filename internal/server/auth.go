@@ -34,6 +34,10 @@ func (s *Server) auth(h func(http.ResponseWriter, *http.Request, principal)) htt
 			}
 		}
 		if s.local != nil && s.localHumanUser != "" && isLoopback(r.RemoteAddr) {
+			if ok, reason := loopbackBrowserOK(r); !ok {
+				writeErr(w, http.StatusForbidden, "%s", reason)
+				return
+			}
 			if u, err := s.st.UserByName(s.localHumanUser); err == nil {
 				h(w, r, principal{user: u, agent: false})
 				return

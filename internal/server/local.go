@@ -5,6 +5,8 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"net/url"
+	"strings"
 
 	"github.com/hou-physics/relais/internal/api"
 	"github.com/hou-physics/relais/internal/store"
@@ -49,6 +51,53 @@ func isLoopback(remoteAddr string) bool {
 	}
 	ip := net.ParseIP(host)
 	return ip != nil && ip.IsLoopback()
+}
+
+// isLoopbackHost：hostname（可能带端口）是否字面写的就是回环地址——与 isLoopback 不同，
+// 这里判断的是 Host/Origin 头里的"名字"本身，而不是 TCP 连接的实际来源 IP。
+func isLoopbackHost(hostport string) bool {
+	host := hostport
+	if h, _, err := net.SplitHostPort(hostport); err == nil {
+		host = h
+	}
+	switch strings.ToLower(host) {
+	case "127.0.0.1", "localhost", "::1", "[::1]":
+		return true
+	default:
+		return false
+	}
+}
+
+// loopbackBrowserOK：本地模式回环免钥匙的第二道判断，挡两类攻击——
+//  1. DNS rebinding：攻击者控制的域名先解析到真实公网 IP 通过校验，再改解析到
+//     127.0.0.1；此时 TCP 连接确实来自回环（isLoopback 为真），但请求的 Host 头
+//     仍是攻击者的域名，不是字面的回环地址，得单独挡。
+//  2. CSRF：浏览器对 127.0.0.1 的"简单请求"（如 Content-Type: text/plain 的表单
+//     POST）不受同源策略限制，任意网站都能悄悄发出；靠 Origin（写请求且带
+//     Origin 时必须也是回环）或没有 Origin 时的 Sec-Fetch-Site 兜底挡。
+//
+// 只在回环免钥匙这条捷径上生效，token/cookie 路径不受影响。
+func loopbackBrowserOK(r *http.Request) (ok bool, reason string) {
+	if !isLoopbackHost(r.Host) {
+		return false, "本地控制台只接受本机地址访问"
+	}
+	switch r.Method {
+	case http.MethodGet, http.MethodHead, http.MethodOptions:
+		return true, ""
+	}
+	if origin := r.Header.Get("Origin"); origin != "" {
+		u, err := url.Parse(origin)
+		if err != nil || !isLoopbackHost(u.Host) {
+			return false, "本地控制台拒绝跨站请求"
+		}
+		return true, ""
+	}
+	switch r.Header.Get("Sec-Fetch-Site") {
+	case "", "same-origin", "none":
+		return true, ""
+	default: // cross-site、same-site 一律拒绝
+		return false, "本地控制台拒绝跨站请求"
+	}
 }
 
 // localOnly：本地控制台只检查回环，不再区分人/agent 钥匙（M9：守卫循环可能用 agent 钥匙自己敲接口）。
@@ -152,7 +201,9 @@ func (s *Server) registerLocalRoutes(mux *http.ServeMux) {
 		}
 		convs, err := s.local.Conversations(side, r.URL.Query().Get("dir"))
 		if err != nil {
-			w.Header().Set("X-Relais-Error", err.Error())
+			// 头字段只能放 ASCII 直接字节，中文错误文案原样塞进去在浏览器里会乱码；
+			// 转义成 %xx，前端用 decodeURIComponent 解回来。
+			w.Header().Set("X-Relais-Error", url.QueryEscape(err.Error()))
 			writeJSON(w, http.StatusOK, []api.LocalConversation{})
 			return
 		}

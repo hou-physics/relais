@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -65,6 +66,9 @@ func (f *fakeLocal) DeleteModule(name string, files bool) error {
 	return nil
 }
 func (f *fakeLocal) Conversations(side, dir string) ([]api.LocalConversation, error) {
+	if dir == "/boom" {
+		return nil, errors.New("烧起来了")
+	}
 	return []api.LocalConversation{{ID: side + "-1", Name: "对话", Cwd: dir, UpdatedAt: time.Now()}}, nil
 }
 func (f *fakeLocal) AttachModule(name string, req api.LocalAttachRequest) (api.LocalModule, error) {
@@ -183,6 +187,13 @@ func TestLocalModuleRoutes(t *testing.T) {
 	if r.StatusCode != 200 || len(convs) != 1 || convs[0].ID != "codex-1" {
 		t.Fatalf("conversations: %d %+v", r.StatusCode, convs)
 	}
+	// manager 出错：200 + 空数组 + X-Relais-Error（转义过，浏览器用 decodeURIComponent 解回来）
+	r = do(t, ts, "GET", "/api/local/conversations?side=codex&dir=/boom", nil)
+	var boomConvs []api.LocalConversation
+	json.NewDecoder(r.Body).Decode(&boomConvs)
+	if hdr, err := url.QueryUnescape(r.Header.Get("X-Relais-Error")); r.StatusCode != 200 || len(boomConvs) != 0 || err != nil || hdr != "烧起来了" {
+		t.Fatalf("conversations 出错分支: %d %+v header=%q err=%v", r.StatusCode, boomConvs, r.Header.Get("X-Relais-Error"), err)
+	}
 	if r := do(t, ts, "POST", "/api/local/modules/m/attach", api.LocalAttachRequest{Side: "codex", Thread: "t9"}); r.StatusCode != 200 || f.attached[0].Thread != "t9" {
 		t.Fatalf("attach: %d", r.StatusCode)
 	}
@@ -219,5 +230,45 @@ func TestLocalPagesServedAtRoot(t *testing.T) {
 		if resp.StatusCode != 200 {
 			t.Fatalf("%s: %d", p, resp.StatusCode)
 		}
+	}
+}
+
+// TestLoopbackBrowserOK：回环免钥匙的第二道判断——挡 DNS rebinding（Host 得字面是回环）
+// 与 CSRF（写请求的 Origin/Sec-Fetch-Site 得像同源）。只测 loopbackBrowserOK 本身，
+// 不经过完整的 auth() 链路（那部分由 TestLoopbackWithoutKeyIsHumanOnlyInLocalMode 覆盖）。
+func TestLoopbackBrowserOK(t *testing.T) {
+	req := func(method, host string, headers map[string]string) *http.Request {
+		r := httptest.NewRequest(method, "/api/local/modules", nil)
+		r.Host = host
+		for k, v := range headers {
+			r.Header.Set(k, v)
+		}
+		return r
+	}
+	cases := []struct {
+		name string
+		r    *http.Request
+		ok   bool
+	}{
+		{"GET 127.0.0.1:8080", req("GET", "127.0.0.1:8080", nil), true},
+		{"GET localhost:8080", req("GET", "localhost:8080", nil), true},
+		{"GET [::1]:8080", req("GET", "[::1]:8080", nil), true},
+		{"GET evil.com", req("GET", "evil.com", nil), false},
+		{"POST 同源 Origin", req("POST", "127.0.0.1:8080", map[string]string{"Origin": "http://127.0.0.1:8080"}), true},
+		{"POST 跨站 Origin", req("POST", "127.0.0.1:8080", map[string]string{"Origin": "https://evil.com"}), false},
+		{"POST 无 Origin + cross-site", req("POST", "127.0.0.1:8080", map[string]string{"Sec-Fetch-Site": "cross-site"}), false},
+		{"POST 无 Origin + same-site", req("POST", "127.0.0.1:8080", map[string]string{"Sec-Fetch-Site": "same-site"}), false},
+		{"POST 无 Origin + same-origin", req("POST", "127.0.0.1:8080", map[string]string{"Sec-Fetch-Site": "same-origin"}), true},
+		{"POST 无 Origin + none", req("POST", "127.0.0.1:8080", map[string]string{"Sec-Fetch-Site": "none"}), true},
+		{"POST 无 Origin 无 Sec-Fetch-Site", req("POST", "127.0.0.1:8080", nil), true},
+		{"POST Host 非回环", req("POST", "evil.com", nil), false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			ok, reason := loopbackBrowserOK(c.r)
+			if ok != c.ok {
+				t.Fatalf("loopbackBrowserOK() = %v (reason %q), want %v", ok, reason, c.ok)
+			}
+		})
 	}
 }
