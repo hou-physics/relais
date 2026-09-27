@@ -107,6 +107,21 @@ func pollOnce(c *Client, targets []bridgeTarget, hook string, notify func(from, 
 	return landed, lastErr
 }
 
+// loadBridgeTargets：每轮重读项目登记表（新建模块无需重启 bridge，spec §4）。
+func loadBridgeTargets() ([]bridgeTarget, error) {
+	ps, err := loadProjects()
+	if err != nil {
+		return nil, err
+	}
+	var targets []bridgeTarget
+	for _, p := range ps {
+		if st, err := os.Stat(p.Dir); err == nil && st.IsDir() {
+			targets = append(targets, bridgeTarget{Channel: p.Channel, Dir: p.Dir})
+		}
+	}
+	return targets, nil
+}
+
 func RunBridge(args []string) error {
 	fs := flag.NewFlagSet("bridge", flag.ContinueOnError)
 	interval := fs.Int("interval", 15, "轮询间隔（秒）")
@@ -118,17 +133,9 @@ func RunBridge(args []string) error {
 	if err != nil {
 		return err
 	}
-	var targets []bridgeTarget
-	ps, err := loadProjects()
+	targets, err := loadBridgeTargets()
 	if err != nil {
 		return err
-	}
-	for _, p := range ps {
-		if st, err := os.Stat(p.Dir); err == nil && st.IsDir() {
-			targets = append(targets, bridgeTarget{Channel: p.Channel, Dir: p.Dir})
-		} else {
-			fmt.Printf("跳过已失效的注册项目 %s（目录 %s 不存在）\n", p.Channel, p.Dir)
-		}
 	}
 	if len(targets) == 0 {
 		root, proj, err := findProject()
@@ -143,7 +150,14 @@ func RunBridge(args []string) error {
 	}
 	backoff := *interval
 	for {
+		if fresh, err := loadBridgeTargets(); err == nil && len(fresh) > 0 {
+			if len(fresh) != len(targets) {
+				fmt.Printf("项目登记表已更新，现照看 %d 个项目\n", len(fresh))
+			}
+			targets = fresh
+		}
 		_, err := pollOnce(c, targets, *hook, notifyDesktop)
+		c.Heartbeat()
 		if err != nil {
 			if backoff < 300 {
 				backoff *= 2

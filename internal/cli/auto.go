@@ -3,8 +3,11 @@ package cli
 import (
 	"fmt"
 	"os"
+	"regexp"
+	"strings"
 
 	"github.com/hou-physics/relais/internal/api"
+	"github.com/hou-physics/relais/internal/msg"
 )
 
 func RunAuto(args []string) error {
@@ -158,10 +161,32 @@ func humanMsgResponder(c *Client, channel, me string) string {
 	case me:
 		who = peer
 	}
+	if hint := firstResponderHint(os.Getenv("RELAIS_MSG_PATH")); hint != "" {
+		who = hint
+	}
 	for _, to := range trigger.To {
 		if to == who {
 			return who
 		}
+	}
+	return ""
+}
+
+var firstResponderRe = regexp.MustCompile(`^@(claude|codex)\b`)
+
+// firstResponderHint：开题信首行 "@codex 先回" 指定先答的一侧（spec §6）。读不到文件或无此行返回空。
+func firstResponderHint(msgPath string) string {
+	data, err := os.ReadFile(msgPath)
+	if err != nil {
+		return ""
+	}
+	_, body, perr := msg.Parse(data)
+	if perr != nil {
+		body = string(data)
+	}
+	first := strings.TrimSpace(strings.SplitN(body, "\n", 2)[0])
+	if m := firstResponderRe.FindStringSubmatch(first); m != nil {
+		return m[1]
 	}
 	return ""
 }

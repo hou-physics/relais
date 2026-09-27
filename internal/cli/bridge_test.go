@@ -152,6 +152,35 @@ func TestRunHookPassesChannelEnv(t *testing.T) {
 	}
 }
 
+func TestBridgeTargetsReloadEachPoll(t *testing.T) {
+	_, _, proj := setupCLITest(t, "hou", "duo") // 已登记 duo → proj
+	targets, err := loadBridgeTargets()
+	if err != nil || len(targets) != 1 || targets[0].Channel != "duo" || targets[0].Dir != proj {
+		t.Fatalf("初始应 1 个目标: %v %v", targets, err)
+	}
+	dir2 := t.TempDir()
+	if err := registerProject("trio", dir2); err != nil {
+		t.Fatal(err)
+	}
+	targets, _ = loadBridgeTargets()
+	if len(targets) != 2 {
+		t.Fatalf("登记新项目后重读应 2 个: %v", targets)
+	}
+	os.RemoveAll(dir2)
+	targets, _ = loadBridgeTargets()
+	if len(targets) != 1 {
+		t.Fatalf("目录失效应被跳过: %v", targets)
+	}
+}
+
+func TestHeartbeatSilentOn404(t *testing.T) {
+	_, _, _ = setupCLITest(t, "hou", "duo") // 测试服务器未注入本地管理器 → 404
+	c, _, _ := newClient()
+	if err := c.Heartbeat(); err != nil {
+		t.Fatalf("联网服务器无心跳路由时应静默: %v", err)
+	}
+}
+
 func TestPollOnceRoutesKickoffToConclusions(t *testing.T) {
 	st, users, proj := setupCLITest(t, "hou", "duo")
 	duo, _ := st.ChannelByName("duo")

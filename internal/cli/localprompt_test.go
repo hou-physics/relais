@@ -20,6 +20,7 @@ func TestLocalPromptContents(t *testing.T) {
 		"不得新增条款", "不替对方改代码", "不写密钥", "工程附录",
 		"summary:",
 		"雇主在频道里说过的话（你上次发言之后）", "预算 5 万",
+		"@ 开头",
 	} {
 		if !strings.Contains(p, want) {
 			t.Fatalf("提示词缺 %q", want)

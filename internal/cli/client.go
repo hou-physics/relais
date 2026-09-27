@@ -164,6 +164,12 @@ func (c *Client) GuidancePull(channel string) (string, error) {
 	return g.Note, err
 }
 
+// Heartbeat：bridge 报活（本地控制台用）。联网服务器没有该路由（404）或网络错误都静默——心跳只是显示用。
+func (c *Client) Heartbeat() error {
+	_ = c.do("POST", "/api/local/heartbeat", nil, nil)
+	return nil
+}
+
 type AdminClient struct {
 	Server  string
 	Session string

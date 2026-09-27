@@ -31,6 +31,7 @@ func localPrompt(side, channel, msgPath, rules, guidance, humanNotes string, fir
 		fmt.Fprintf(&b, "这是你在本频道第一次发言。先读 relais/inbox/ 与 relais/sent/ 下信头 channel: %s 的全部往来（文件名以日期开头），再读新信。\n", channel)
 	}
 	fmt.Fprintf(&b, "新信在文件 %s。当前目录是项目根，可用只读工具查看代码。同目录下可能混有其他模块的信，只看信头 channel: %s 的。\n", msgPath, channel)
+	b.WriteString("正文首行若以 @ 开头（如 @codex 先回），是给系统的路由指示，忽略它。\n")
 	if strings.TrimSpace(humanNotes) != "" {
 		b.WriteString("\n## 雇主在频道里说过的话（你上次发言之后）\n")
 		b.WriteString(strings.TrimSpace(humanNotes))

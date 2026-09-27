@@ -1,8 +1,12 @@
 package cli
 
 import (
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/hou-physics/relais/internal/msg"
 	"github.com/hou-physics/relais/internal/store"
 )
 
@@ -84,5 +88,59 @@ func TestAutoTurnHumanMessageSingleRecipient(t *testing.T) {
 	t.Setenv("RELAIS_MSG_ID", h1.ID)
 	if err := RunAutoTurn(nil); err != nil {
 		t.Fatalf("接话方 claude 不在收件人里，codex 应照常接: %v", err)
+	}
+}
+
+func TestFirstResponderHintOverridesRule(t *testing.T) {
+	st, users, proj := setupCLITest(t, "hou", "duo")
+	cl, _ := st.CreateUser("claude", "Claude 侧", "pw-c")
+	cx, _ := st.CreateUser("codex", "Codex 侧", "pw-x")
+	hou := users["hou"]
+	ch, _ := st.CreateChannel("smoke")
+	for _, u := range []*store.User{cl, cx, hou} {
+		st.AddMember(ch.ID, u.ID)
+	}
+	st.SetAutoEnabled(ch.ID, true, 16)
+	t.Setenv("RELAIS_CHANNEL", "smoke")
+	g, _ := loadGlobal()
+	as := func(u *store.User, from, msgID, msgPath string) error {
+		t.Helper()
+		if err := saveGlobal(&GlobalConfig{Server: g.Server, Token: u.AgentToken, Username: u.Username}); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("RELAIS_MSG_FROM", from)
+		t.Setenv("RELAIS_MSG_ID", msgID)
+		t.Setenv("RELAIS_MSG_PATH", msgPath)
+		return RunAutoTurn(nil)
+	}
+	// claude 刚说过话 → 默认该 codex 接；但人的信首行 "@claude 先回" → claude 接
+	st.SaveMessageOpts(ch.ID, cl.ID, []int64{cx.ID}, "s", "x", "", store.SaveOpts{})
+	body := "@claude 先回\n\n议题正文"
+	h, _ := st.SaveMessageOpts(ch.ID, hou.ID, []int64{cl.ID, cx.ID}, "开题", body, "", store.SaveOpts{})
+	msgFile := filepath.Join(proj, "relais", "inbox", "h.md")
+	os.WriteFile(msgFile, msg.Render(msg.Envelope{ID: h.ID, Channel: "smoke", From: "hou", To: []string{"claude", "codex"}, Summary: "开题"}, body), 0o644)
+	if got := firstResponderHint(msgFile); got != "claude" {
+		t.Fatalf("应识别 @claude: %q", got)
+	}
+	if err := as(cx, "hou", h.ID, msgFile); err == nil || !strings.Contains(err.Error(), "由 claude 侧接话") {
+		t.Fatalf("codex 应被拒: %v", err)
+	}
+	if err := as(cl, "hou", h.ID, msgFile); err != nil {
+		t.Fatalf("claude 应放行: %v", err)
+	}
+	// @codex 但 codex 不在收件人里 → 不干预（收到的一侧照常接）
+	body2 := "@codex 先回\n\n只发给 claude"
+	h2, _ := st.SaveMessageOpts(ch.ID, hou.ID, []int64{cl.ID}, "s", body2, "", store.SaveOpts{})
+	os.WriteFile(msgFile, msg.Render(msg.Envelope{ID: h2.ID, Channel: "smoke", From: "hou", To: []string{"claude"}, Summary: "s"}, body2), 0o644)
+	if err := as(cl, "hou", h2.ID, msgFile); err != nil {
+		t.Fatalf("接话方不在收件人里时收到的一侧应照常接: %v", err)
+	}
+	// 无 @ 行 → 原规则；文件不存在 → 空
+	os.WriteFile(msgFile, []byte("---\nid: x\n---\n\n普通正文"), 0o644)
+	if got := firstResponderHint(msgFile); got != "" {
+		t.Fatalf("无 @ 行应空: %q", got)
+	}
+	if got := firstResponderHint("/nonexistent"); got != "" {
+		t.Fatal("文件不存在应空")
 	}
 }
