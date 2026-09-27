@@ -65,8 +65,13 @@ func (s *Store) SetArchivedSeq(channelID int64, seq int) error {
 	return err
 }
 
+// SetCodexAttach：登记 codex 侧接入的对话，清掉模块级投递错误，并删掉本频道 codex 侧
+// 的失败投递记录——接入变了，之前失败的信应立刻重投，不必等重试间隔（终审修复 #2）。
 func (s *Store) SetCodexAttach(channelID int64, threadID, threadName, at string) error {
-	_, err := s.db.Exec(`UPDATE local_modules SET codex_thread_id=?, codex_thread_name=?, codex_attached_at=?, codex_delivery_error='' WHERE channel_id=?`, threadID, threadName, at, channelID)
+	if _, err := s.db.Exec(`UPDATE local_modules SET codex_thread_id=?, codex_thread_name=?, codex_attached_at=?, codex_delivery_error='' WHERE channel_id=?`, threadID, threadName, at, channelID); err != nil {
+		return err
+	}
+	_, err := s.db.Exec(`DELETE FROM local_deliveries WHERE side='codex' AND status='error' AND message_id IN (SELECT id FROM messages WHERE channel_id=?)`, channelID)
 	return err
 }
 
@@ -240,4 +245,56 @@ func (s *Store) ReopenChannel(channelID int64) error {
 	_, err := s.db.Exec(`INSERT INTO channel_auto (channel_id, closed, paused) VALUES (?,0,0)
 		ON CONFLICT(channel_id) DO UPDATE SET closed=0, paused=0`, channelID)
 	return err
+}
+
+// PendingCodexDeliveries：该投给 codex 却还没投成功的消息 id（终审修复 #2）。
+// 条件：收件人含 codex 账号或是 kickoff；已归档（普通信 seq<=archived_seq，kickoff 有
+// archive 投递记录）；不是 codex 自己发的；没有 (id,'codex',status='ok') 的投递记录。
+// 按时间先后排列（kickoff 排在它的结论之后，因为它总是后建的）。
+func (s *Store) PendingCodexDeliveries(channelID int64) ([]string, error) {
+	rows, err := s.db.Query(`SELECT m.id FROM messages m
+		JOIN local_modules lm ON lm.channel_id=m.channel_id
+		JOIN users su ON su.id=m.sender_id
+		WHERE m.channel_id=? AND su.username<>'codex'
+		AND (m.kind='kickoff' OR EXISTS (SELECT 1 FROM recipients r JOIN users u ON u.id=r.user_id WHERE r.message_id=m.id AND u.username='codex'))
+		AND ((m.kind<>'kickoff' AND m.seq>0 AND m.seq<=lm.archived_seq)
+		     OR (m.kind='kickoff' AND EXISTS (SELECT 1 FROM local_deliveries d WHERE d.message_id=m.id AND d.side='archive')))
+		AND NOT EXISTS (SELECT 1 FROM local_deliveries d WHERE d.message_id=m.id AND d.side='codex' AND d.status='ok')
+		ORDER BY m.created_at, m.seq, m.id`, channelID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
+// MarkChannelDelivered：把频道里现有的消息都记为「已归档、已投两侧」（只补没有记录的）。
+// 接管一个已有历史的频道（M8 升级迁移、CreateModule 收编已有频道）时用：旧信与旧 kickoff
+// 不重新归档、不补投（终审修复 #3）。
+func (s *Store) MarkChannelDelivered(channelID int64) error {
+	at := now()
+	for _, q := range []string{
+		`INSERT INTO local_deliveries (message_id, side, status, error, at)
+			SELECT id, 'archive', 'ok', '', ? FROM messages WHERE channel_id=? AND kind='kickoff'
+			ON CONFLICT(message_id, side) DO NOTHING`,
+		`INSERT INTO local_deliveries (message_id, side, status, error, at)
+			SELECT id, 'claude', 'ok', '', ? FROM messages WHERE channel_id=?
+			ON CONFLICT(message_id, side) DO NOTHING`,
+		`INSERT INTO local_deliveries (message_id, side, status, error, at)
+			SELECT id, 'codex', 'ok', '', ? FROM messages WHERE channel_id=?
+			ON CONFLICT(message_id, side) DO NOTHING`,
+	} {
+		if _, err := s.db.Exec(q, at, channelID); err != nil {
+			return err
+		}
+	}
+	return nil
 }

@@ -35,6 +35,8 @@ type Daemon struct {
 	// NotifyEveryLetter：非 nil 且返回 true 时，archive 每落盘一封非 kickoff、非
 	// relais 发件的信都额外通知一次（控制者裁决 M9 Task 7 #1）。nil 视为 false。
 	NotifyEveryLetter func() bool
+	// Now：时钟，测试可注入；nil 用 time.Now。只用于投递失败后的重试间隔。
+	Now func() time.Time
 
 	// mu：串行化 RunOnce 与 Redeliver（修复轮 1 裁决 c）——两者都会读写同一模块的
 	// outbox/归档文件与登记表，并发跑会互相踩脚。
@@ -95,10 +97,64 @@ func (d *Daemon) RunOnce() error {
 		fresh, err := d.archive(m, md)
 		keep(err)
 		for _, l := range fresh {
-			keep(d.deliver(m, md, l))
+			if l.Kind == "kickoff" || slices.Contains(l.To, "claude") {
+				_ = d.Store.RecordDelivery(l.ID, "claude", "ok", "")
+			}
 		}
+		keep(d.deliverPending(m, md))
 	}
 	return first
+}
+
+// codexRetryAfter：投给 codex 失败的信，隔多久再自动重投（接入变了则立刻重投，
+// 见 store.SetCodexAttach 清失败记录）。
+const codexRetryAfter = 60 * time.Second
+
+func (d *Daemon) now() time.Time {
+	if d.Now != nil {
+		return d.Now()
+	}
+	return time.Now()
+}
+
+// deliverPending：spec §7.3 的 codex 侧，按「待投集合」而不是「本轮新归档」驱动
+// （终审修复 #2）：接入前写给 codex 的信在接入后补投；归档后、投递前崩溃也不会丢。
+// 按先后顺序投，遇到失败或还在重试间隔内的就停，保证 Codex 收信不乱序。
+func (d *Daemon) deliverPending(m ModuleRef, md string) error {
+	ids, err := d.Store.PendingCodexDeliveries(m.ChannelID)
+	if err != nil || len(ids) == 0 {
+		return err
+	}
+	all, err := ListLetters(md)
+	if err != nil {
+		return err
+	}
+	byID := make(map[string]Letter, len(all))
+	for _, l := range all {
+		if l.ID != "" {
+			byID[l.ID] = l
+		}
+	}
+	_, attached := ReadAttach(md)
+	for _, id := range ids {
+		if status, _, at, err := d.Store.Delivery(id, "codex"); err == nil && status == "error" {
+			if !attached {
+				return nil // 仍未接入：重投也是同样的错，等接入（接入会清掉失败记录）
+			}
+			if t, err := time.Parse(time.RFC3339, at); err == nil && d.now().Sub(t) < codexRetryAfter {
+				return nil
+			}
+		}
+		l, ok := byID[id]
+		if !ok {
+			d.log().Warn("待投给 codex 的信找不到归档文件，跳过", "module", m.Name, "id", id)
+			continue
+		}
+		if err := d.deliverCodex(m, md, l); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (d *Daemon) syncAttach(m ModuleRef, md string) {
@@ -345,24 +401,19 @@ func DeliveryText(module string, l Letter, body string, prior []Letter) string {
 	return head + desc + "\n读它，按 relais/PROTOCOL.md 回信。"
 }
 
-// deliver：spec §7.3。claude 侧靠门铃，只记一笔；codex 侧 queue。只投给信封 to 里
+// 投递规则（spec §7.3）：claude 侧靠门铃，只记一笔；codex 侧 queue。只投给信封 to 里
 // 点了名的一侧（kickoff 例外，一律投两侧）——修复轮 1 F4：以前不管 to 是谁都投 codex，
-// 雇主只想跟 claude 说的悄悄话也会被塞进 Codex 对话。
-func (d *Daemon) deliver(m ModuleRef, md string, l Letter) error {
-	if l.Kind == "kickoff" || slices.Contains(l.To, "claude") {
-		_ = d.Store.RecordDelivery(l.ID, "claude", "ok", "")
-	}
-	if l.Kind != "kickoff" && !slices.Contains(l.To, "codex") {
-		return nil
-	}
-	return d.deliverCodex(m, md, l)
-}
+// 雇主只想跟 claude 说的悄悄话也会被塞进 Codex 对话。codex 侧的「该投谁」由
+// store.PendingCodexDeliveries 按同一条规则挑。
 
 func (d *Daemon) deliverCodex(m ModuleRef, md string, l Letter) error {
 	fail := func(msg string) error {
+		prev, _, _, _ := d.Store.Delivery(l.ID, "codex")
 		_ = d.Store.RecordDelivery(l.ID, "codex", "error", msg)
 		_ = d.Store.SetCodexDeliveryError(m.ChannelID, msg)
-		d.notify("Relais · "+m.Name, "没能把信送进 Codex 对话："+msg)
+		if prev != "error" { // 自动重试再失败不重复弹通知
+			d.notify("Relais · "+m.Name, "没能把信送进 Codex 对话："+msg)
+		}
 		return errors.New(msg)
 	}
 	a, ok := ReadAttach(md)

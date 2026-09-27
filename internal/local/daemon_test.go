@@ -415,3 +415,85 @@ func TestDaemonRedeliverErrorsClearlyWhenNothingToDeliver(t *testing.T) {
 		t.Fatalf("错误应说明白没有可投的信: %v", err)
 	}
 }
+
+// --- 终审修复 ---
+
+// #2(a)：Codex 接入前写给它的信，接入后下一轮补投。
+func TestDaemonDeliversPendingAfterAttach(t *testing.T) {
+	f := newFixture(t)
+	users := f.d.Users
+	f.st.SaveMessage(f.chID, users["hou"], []int64{users["claude"], users["codex"]}, "先回", "@codex 先回\n\n用什么缓存", "")
+	if err := f.d.RunOnce(); err == nil {
+		t.Fatal("未接入时投递应报错")
+	}
+	if _, err := os.Stat(f.codex); err == nil {
+		t.Fatal("未接入时不该调用 codex")
+	}
+	notes := len(f.notes)
+	f.d.RunOnce() // 仍未接入：不重试、不再通知
+	if len(f.notes) != notes {
+		t.Fatalf("未接入时不该每轮重复通知: %v", f.notes)
+	}
+	WriteAttach(f.md, Attach{ThreadID: "t-1", At: time.Now()})
+	if err := f.d.RunOnce(); err != nil {
+		t.Fatal(err)
+	}
+	argv, _ := os.ReadFile(f.codex)
+	if !strings.Contains(string(argv), "001-hou.md") || !strings.Contains(string(argv), "由你先回") {
+		t.Fatalf("接入后应补投接入前的信: %q", argv)
+	}
+	if m, _ := f.st.LocalModuleByName("m"); m.CodexDeliveryError != "" {
+		t.Fatalf("补投成功应清错误: %q", m.CodexDeliveryError)
+	}
+	f.d.RunOnce()
+	if again, _ := os.ReadFile(f.codex); string(again) != string(argv) {
+		t.Fatal("投成功后不该再投")
+	}
+}
+
+// #2(b)：归档后、投递前崩溃（这里用「已归档但没有投递记录」模拟），下一轮照样投。
+func TestDaemonDeliversArchivedButUndelivered(t *testing.T) {
+	f := newFixture(t)
+	WriteAttach(f.md, Attach{ThreadID: "t-1", At: time.Now()})
+	f.post(t, "claude", "第一封\n", PostOpts{})
+	f.d.RunOnce()
+	id, _, _, _, _ := f.st.LastDelivery(f.chID, "codex")
+	os.Remove(f.codex)
+	if err := f.st.RecordDelivery(id, "codex", "pending", ""); err != nil { // 非 ok：当作没投成
+		t.Fatal(err)
+	}
+	f.d.RunOnce()
+	if argv, _ := os.ReadFile(f.codex); !strings.Contains(string(argv), "001-claude.md") {
+		t.Fatalf("没投成的归档信应补投: %q", argv)
+	}
+}
+
+// #2：投递失败后 60 秒内不自动重试，过了 60 秒重试。
+func TestDaemonRetriesFailedDeliveryAfterInterval(t *testing.T) {
+	f := newFixture(t)
+	clock := time.Now()
+	f.d.Now = func() time.Time { return clock }
+	WriteAttach(f.md, Attach{ThreadID: "t-1", At: time.Now()})
+	t.Setenv("FAKE_CODEX_FAIL", "1")
+	f.post(t, "claude", "第一封\n", PostOpts{})
+	if err := f.d.RunOnce(); err == nil {
+		t.Fatal("首次投递应失败")
+	}
+	t.Setenv("FAKE_CODEX_FAIL", "0")
+	count := func() int { b, _ := os.ReadFile(f.codex); return strings.Count(string(b), "001-claude.md") }
+	clock = clock.Add(30 * time.Second)
+	f.d.RunOnce()
+	if count() != 1 {
+		t.Fatalf("60 秒内不该重试: %d", count())
+	}
+	clock = clock.Add(40 * time.Second)
+	if err := f.d.RunOnce(); err != nil {
+		t.Fatal(err)
+	}
+	if count() != 2 {
+		t.Fatalf("过了 60 秒应重试一次: %d", count())
+	}
+	if _, status, _, _, _ := f.st.LastDelivery(f.chID, "codex"); status != "ok" {
+		t.Fatalf("重试成功应记 ok: %s", status)
+	}
+}
