@@ -489,7 +489,17 @@ func (m *localManager) moduleInfo(st *store.Store, lm store.LocalModule) (api.Lo
 	}
 
 	ss := local.ReadSideStatus(md, local.PIDAlive)
-	out.Claude = api.LocalSide{Waiting: ss.ClaudeWaiting, WaitSince: ss.ClaudeWaitSince}
+	out.Claude = api.LocalSide{Waiting: ss.ClaudeWaiting, WaitSince: ss.ClaudeWaitSince, Cursor: ss.ClaudeCursor}
+	// wait 收到信就退出（Claude 就是这样被叫醒的），所以 Claude 回信期间 waiting=false。
+	// 游标已经读到最后一封给 Claude 的信 = 已收信、正在回，算接上了（终审修复 #1）。
+	lastForClaude := 0
+	for i := len(letters) - 1; i >= 0; i-- {
+		if letters[i].From != "claude" {
+			lastForClaude = letters[i].Seq
+			break
+		}
+	}
+	out.Claude.Working = !ss.ClaudeWaiting && lastForClaude > 0 && ss.ClaudeCursor >= lastForClaude
 	if ss.ClaudeSessionID != "" {
 		if home, err := os.UserHomeDir(); err == nil {
 			if sess, err := local.ListClaudeSessions(home, ""); err == nil {
@@ -542,7 +552,7 @@ func (m *localManager) moduleInfo(st *store.Store, lm store.LocalModule) (api.Lo
 		out.State = "已握手"
 	case waitingYou:
 		out.State = "等你"
-	case !out.Claude.Waiting && !out.Codex.Attached && out.LastSeq == 0:
+	case !out.Claude.Waiting && !out.Claude.Working && !out.Codex.Attached && out.LastSeq == 0:
 		out.State = "未接入"
 	default:
 		out.State = "讨论中"

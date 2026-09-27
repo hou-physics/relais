@@ -183,6 +183,8 @@ type LocalSide struct {
 	Waiting       bool      `json:"waiting"` // claude
 	WaitSince     time.Time `json:"wait_since,omitempty"`
 	SessionName   string    `json:"session_name,omitempty"`
+	Cursor        int       `json:"cursor"`  // claude：wait 读到的最后一封的 seq
+	Working       bool      `json:"working"` // claude：没在 wait，但已读到最后一封给它的信（wait 收信即退出，正在回）
 	Attached      bool      `json:"attached"` // codex
 	ThreadName    string    `json:"thread_name,omitempty"`
 	AttachedAt    time.Time `json:"attached_at,omitempty"`
@@ -208,6 +210,7 @@ type LocalModule struct {
 	PendingConclusion *LocalConclusion `json:"pending_conclusion,omitempty"`
 	Rejected          []string         `json:"rejected,omitempty"` // outbox 里 .rejected 文件名
 	Closed            bool             `json:"closed"`
+	MailboxMissing    bool             `json:"mailbox_missing"` // 守卫发现 relais/mail/<模块>/ 不见了（项目被移动或删除？）
 }
 
 type LocalConclusion struct {

@@ -526,3 +526,23 @@ func TestCreateModulePermissionDenied(t *testing.T) {
 		t.Fatalf("无权限应给出授权提示，实为: %v", err)
 	}
 }
+
+// 终审修复 #1：wait 收信即退出，Claude 回信期间 waiting=false；游标读到最后一封给它的信 = 正在回。
+func TestModuleInfoClaudeWorking(t *testing.T) {
+	_, mgr := bootstrapped(t)
+	proj := t.TempDir()
+	mgr.CreateModule(api.LocalModuleRequest{Name: "m", Dir: proj})
+	md := filepath.Join(proj, "relais", "mail", "m")
+	os.WriteFile(filepath.Join(md, "001-claude.md"), []byte("---\nseq: 1\nfrom: claude\nkind: letter\nsummary: 开题\n---\n\nx"), 0o644)
+	os.WriteFile(filepath.Join(md, "002-codex.md"), []byte("---\nseq: 2\nfrom: codex\nkind: letter\nsummary: 回\n---\n\ny"), 0o644)
+	os.WriteFile(filepath.Join(md, ".cursor-claude"), []byte(`{"seq":1}`), 0o644)
+	mods, _ := mgr.ListModules()
+	if m := mods[0]; m.Claude.Working || m.Claude.Cursor != 1 || m.WaitingFor != "claude" {
+		t.Fatalf("游标落后于最后一封 codex 信，不算正在回: %+v", m.Claude)
+	}
+	os.WriteFile(filepath.Join(md, ".cursor-claude"), []byte(`{"seq":2}`), 0o644)
+	mods, _ = mgr.ListModules()
+	if m := mods[0]; !m.Claude.Working || m.Claude.Waiting || m.Claude.Cursor != 2 || m.State != "讨论中" {
+		t.Fatalf("游标等于最后一封 codex 信应算正在回: %+v state=%s", m.Claude, m.State)
+	}
+}

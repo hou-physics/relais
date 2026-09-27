@@ -21,6 +21,7 @@
   9. `CodexThreadByIDOrName`：`relais attach --thread` 与控制台点选按 id 或对话名精确匹配（直接 SQL 取一条），不再从截断为 20 条的列表里找。
   10. `SetCap`/`MaxSeq`/`SentKeyExists`：store 新增三个方法——改上限只改 `cap` 不清回合数；迁移旧登记表时 `archived_seq = MaxSeq`（旧信不重新归档）；`sent_keys` 存在性检查用于 outbox 重放。
   11. `GET /{$}` 路由：有 `local_dir` 时根路径与 `/index.html` 改为本地控制台页面，线上仍是联网页面（`GET /{$}` 只匹配根，优先于 `GET /`）。
+  12. 终审修复：`relais wait` 收信即退出，Claude 回信期间 `waiting=false`，所以模块状态新增 `claude.cursor` 与 `claude.working`（没在 wait、但游标已读到最后一封不是 Claude 发的信即为「已收信，正在回」），控制台把 working 也算接上，不再每回合都显示「Claude 侧还没接入」。
 - **状态**：live（v0.7.0-m9）。
 - **反转触发**：Codex 升级改了 `queue`/`threads` 表 → Codex 侧退回门铃；Claude Code 强杀长时间后台命令 → `wait` 加超时循环。
 

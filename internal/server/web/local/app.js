@@ -73,11 +73,12 @@ async function select(name) {
   openSSE();
 }
 const sideLabel = { claude: "Claude", codex: "Codex" };
-// 被等的那一侧是否接上了：claude 看 waiting，codex 看 attached
-function sideConnected(m, side) { return side === "claude" ? m.claude.waiting : side === "codex" ? m.codex.attached : false; }
+// 被等的那一侧是否接上了：claude 看 waiting 或 working（wait 收信即退出，回信期间 waiting=false），codex 看 attached
+function sideConnected(m, side) { return side === "claude" ? (m.claude.waiting || m.claude.working) : side === "codex" ? m.codex.attached : false; }
 function sideText(m) {
   const c = m.claude, x = m.codex;
   const claude = c.waiting ? `在等信${c.session_name ? " · 对话「" + esc(c.session_name) + "」" : ""} · 从 ${esc(new Date(c.wait_since).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" }))} 起`
+    : c.working ? "已收信，正在回（wait 会在它发完后重跑）"
     : `没在等 · 在 Claude 对话里说：${esc(attachHint(m.name))}`;
   let codex = x.attached ? `已接入「${esc(x.thread_name || "未命名对话")}」` : `未接入 · 在 Codex 对话里说：${esc(attachHint(m.name))}`;
   if (x.attached && x.last_delivery === "ok") codex += ` · 已投递 ${esc(ago(x.delivery_at))}`;
@@ -108,7 +109,7 @@ function renderNow() {
   const t = sideText(m);
   $("side-claude").innerHTML = t.claude;
   $("side-codex").innerHTML = t.codex;
-  document.querySelector('[data-copy-side="claude"]').hidden = m.claude.waiting;
+  document.querySelector('[data-copy-side="claude"]').hidden = m.claude.waiting || m.claude.working;
   document.querySelector('[data-copy-side="codex"]').hidden = m.codex.attached;
   $("pick-codex").hidden = false;
   renderTodo(m);
@@ -135,7 +136,7 @@ function renderTodo(m) {
   }
   const hint = esc(attachHint(m.name));
   const attachButtons = (side) => `<div class="row gap"><button class="btn ghost tiny" data-copy="${hint}">复制「${hint}」</button>${side === "codex" ? `<button class="btn ghost tiny" data-act="pick">从列表选</button>` : ""}</div>`;
-  const bothItem = !m.closed && !m.claude.waiting && !m.codex.attached && m.last_seq === 0;
+  const bothItem = !m.closed && !sideConnected(m, "claude") && !m.codex.attached && m.last_seq === 0;
   let codexCovered = false;
   if (m.codex.delivery_error) {
     if (m.codex.attached) {
